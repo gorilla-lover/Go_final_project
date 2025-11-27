@@ -1,0 +1,738 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>分帳器</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      min-height: 100vh;
+      padding: 20px;
+      overflow-y: auto;
+    }
+
+    .container {
+      max-width: 850px;
+      margin: 0 auto;
+      background: white;
+      border-radius: 20px;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+      overflow: hidden;
+    }
+
+    .header {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      padding: 30px;
+      text-align: center;
+    }
+
+    .header h1 {
+      font-size: 28px;
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+    }
+
+    .header p {
+      opacity: 0.9;
+      font-size: 14px;
+    }
+
+    .content {
+      padding: 30px;
+    }
+
+    .section {
+      margin-bottom: 30px;
+      padding: 25px;
+      background: #f8f9fa;
+      border-radius: 12px;
+      border: 2px solid #e9ecef;
+    }
+
+    .section-title {
+      font-size: 18px;
+      font-weight: 700;
+      color: #2d3748;
+      margin-bottom: 20px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .step-number {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 28px;
+      height: 28px;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      border-radius: 50%;
+      font-size: 14px;
+      font-weight: 700;
+    }
+
+    .form-group {
+      margin-bottom: 20px;
+    }
+
+    label {
+      display: block;
+      font-size: 13px;
+      font-weight: 600;
+      color: #4a5568;
+      margin-bottom: 8px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    input[type="text"],
+    input[type="number"],
+    select {
+      width: 100%;
+      padding: 12px;
+      border: 2px solid #e2e8f0;
+      border-radius: 8px;
+      font-size: 15px;
+      transition: all 0.3s ease;
+      background: white;
+    }
+
+    input:focus,
+    select:focus {
+      outline: none;
+      border-color: #667eea;
+      box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+    }
+
+    .people-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      gap: 12px;
+    }
+
+    .person-input {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .person-number {
+      width: 32px;
+      height: 32px;
+      background: #667eea;
+      color: white;
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      font-size: 14px;
+      flex-shrink: 0;
+    }
+
+    .person-input input {
+      flex: 1;
+    }
+
+    button {
+      padding: 12px 24px;
+      border: none;
+      border-radius: 8px;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.3s ease;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .btn-primary {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+    }
+
+    .btn-primary:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 6px 20px rgba(102, 126, 234, 0.5);
+    }
+
+    .btn-secondary {
+      background: #e9ecef;
+      color: #495057;
+    }
+
+    .btn-secondary:hover {
+      background: #dee2e6;
+    }
+
+    .btn-danger {
+      background: #f56565;
+      color: white;
+    }
+
+    .btn-danger:hover {
+      background: #e53e3e;
+    }
+
+    .btn-success {
+      background: #48bb78;
+      color: white;
+    }
+
+    .btn-success:hover {
+      background: #38a169;
+    }
+
+    .bill-item {
+      background: white;
+      padding: 20px;
+      border-radius: 12px;
+      margin-bottom: 15px;
+      border: 2px solid #e9ecef;
+      transition: all 0.3s ease;
+    }
+
+    .bill-item:hover {
+      border-color: #cbd5e0;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+    }
+
+    .bill-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: start;
+      margin-bottom: 15px;
+    }
+
+    .bill-title {
+      font-size: 16px;
+      font-weight: 600;
+      color: #2d3748;
+    }
+
+    .bill-amount {
+      font-size: 18px;
+      font-weight: 700;
+      color: #667eea;
+    }
+
+    .bill-details {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+
+    .bill-detail-item {
+      font-size: 13px;
+      color: #718096;
+    }
+
+    .bill-detail-label {
+      font-weight: 600;
+      color: #4a5568;
+    }
+
+    .participant-tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 8px;
+    }
+
+    .participant-tag {
+      background: #edf2f7;
+      color: #4a5568;
+      padding: 4px 10px;
+      border-radius: 12px;
+      font-size: 12px;
+      font-weight: 500;
+    }
+
+    .checkbox-group {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+      gap: 10px;
+      margin-top: 10px;
+    }
+
+    .checkbox-label {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      cursor: pointer;
+      padding: 8px;
+      border-radius: 6px;
+      transition: background 0.2s;
+    }
+
+    .checkbox-label:hover {
+      background: #f7fafc;
+    }
+
+    .checkbox-label input[type="checkbox"] {
+      width: 18px;
+      height: 18px;
+      cursor: pointer;
+    }
+
+    .result-section {
+      background: linear-gradient(135deg, #f7fafc 0%, #edf2f7 100%);
+      padding: 25px;
+      border-radius: 12px;
+      border: 2px solid #e2e8f0;
+    }
+
+    .settlement-item {
+      background: white;
+      padding: 20px;
+      border-radius: 12px;
+      margin-bottom: 12px;
+      border-left: 4px solid #667eea;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+    }
+
+    .settlement-text {
+      font-size: 15px;
+      color: #2d3748;
+    }
+
+    .settlement-from {
+      font-weight: 700;
+      color: #667eea;
+    }
+
+    .settlement-to {
+      font-weight: 700;
+      color: #764ba2;
+    }
+
+    .settlement-amount {
+      font-size: 20px;
+      font-weight: 700;
+      color: #48bb78;
+    }
+
+    .empty-state {
+      text-align: center;
+      padding: 40px;
+      color: #a0aec0;
+    }
+
+    .empty-state-icon {
+      font-size: 48px;
+      margin-bottom: 16px;
+    }
+
+    .button-group {
+      display: flex;
+      gap: 12px;
+      margin-top: 20px;
+    }
+
+    .hidden {
+      display: none;
+    }
+
+    .error-message {
+      background: #fed7d7;
+      color: #c53030;
+      padding: 12px;
+      border-radius: 8px;
+      margin-top: 12px;
+      font-size: 14px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>💰 分帳器</h1>
+      <p>輕鬆管理團體帳務，一鍵計算誰該付誰多少錢</p>
+    </div>
+
+    <div class="content">
+      <!-- 步驟 1: 設定人員 -->
+      <div class="section">
+        <div class="section-title">
+          <span class="step-number">1</span>
+          設定參與人員
+        </div>
+        <div class="form-group">
+          <label>參與人數（最多 20 人）</label>
+          <input type="number" id="peopleCount" min="2" max="20" value="3" />
+        </div>
+        <div id="peopleInputs" class="people-grid"></div>
+        <div class="button-group">
+          <button class="btn-primary" id="confirmPeople">
+            ✓ 確認人員
+          </button>
+        </div>
+      </div>
+
+      <!-- 步驟 2: 新增帳單 -->
+      <div class="section hidden" id="billSection">
+        <div class="section-title">
+          <span class="step-number">2</span>
+          新增帳單
+        </div>
+        
+        <div class="form-group">
+          <label>帳單名稱</label>
+          <input type="text" id="billTitle" placeholder="例如：晚餐、計程車、電影票" />
+        </div>
+
+        <div class="form-group">
+          <label>金額</label>
+          <input type="number" id="billAmount" step="0.01" min="0" placeholder="0.00" />
+        </div>
+
+        <div class="form-group">
+          <label>由誰先付款</label>
+          <select id="billPaidBy"></select>
+        </div>
+
+        <div class="form-group">
+          <label>參與分帳的人（可多選）</label>
+          <div id="billParticipants" class="checkbox-group"></div>
+        </div>
+
+        <div class="button-group">
+          <button class="btn-success" id="addBill">
+            ➕ 新增此帳單
+          </button>
+        </div>
+
+        <div id="billError" class="error-message hidden"></div>
+
+        <!-- 已新增的帳單列表 -->
+        <div id="billsList" style="margin-top: 30px;"></div>
+
+        <div class="button-group" id="calculateSection" style="display: none;">
+          <button class="btn-primary" id="calculateBtn">
+            🧮 計算分帳結果
+          </button>
+        </div>
+      </div>
+
+      <!-- 步驟 3: 結算結果 -->
+      <div class="section hidden" id="resultSection">
+        <div class="section-title">
+          <span class="step-number">3</span>
+          結算結果
+        </div>
+        <div id="resultContent"></div>
+        <div class="button-group">
+          <button class="btn-secondary" id="resetBtn">
+            🔄 重新開始
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const MAX_PEOPLE = 20;
+    let people = [];
+    let bills = [];
+    let billIdCounter = 1;
+
+    // DOM 元素
+    const peopleCountInput = document.getElementById('peopleCount');
+    const peopleInputsDiv = document.getElementById('peopleInputs');
+    const confirmPeopleBtn = document.getElementById('confirmPeople');
+    const billSection = document.getElementById('billSection');
+    const billTitleInput = document.getElementById('billTitle');
+    const billAmountInput = document.getElementById('billAmount');
+    const billPaidBySelect = document.getElementById('billPaidBy');
+    const billParticipantsDiv = document.getElementById('billParticipants');
+    const addBillBtn = document.getElementById('addBill');
+    const billsListDiv = document.getElementById('billsList');
+    const calculateSection = document.getElementById('calculateSection');
+    const calculateBtn = document.getElementById('calculateBtn');
+    const resultSection = document.getElementById('resultSection');
+    const resultContent = document.getElementById('resultContent');
+    const resetBtn = document.getElementById('resetBtn');
+    const billError = document.getElementById('billError');
+
+    // 生成人員輸入框
+    function generatePeopleInputs() {
+      const count = Math.min(Math.max(2, parseInt(peopleCountInput.value) || 2), MAX_PEOPLE);
+      peopleCountInput.value = count;
+      
+      peopleInputsDiv.innerHTML = '';
+      for (let i = 1; i <= count; i++) {
+        const div = document.createElement('div');
+        div.className = 'person-input';
+        div.innerHTML = `
+          <div class="person-number">${i}</div>
+          <input type="text" id="person${i}" placeholder="人員 ${i} 的名稱" value="人員 ${i}" />
+        `;
+        peopleInputsDiv.appendChild(div);
+      }
+    }
+
+    // 確認人員
+    function confirmPeople() {
+      const count = parseInt(peopleCountInput.value);
+      people = [];
+      
+      for (let i = 1; i <= count; i++) {
+        const name = document.getElementById(`person${i}`).value.trim();
+        if (name) {
+          people.push({ id: i, name: name });
+        }
+      }
+
+      if (people.length < 2) {
+        alert('至少需要 2 個人！');
+        return;
+      }
+
+      // 更新付款人下拉選單
+      billPaidBySelect.innerHTML = '';
+      people.forEach(person => {
+        const option = document.createElement('option');
+        option.value = person.id;
+        option.textContent = person.name;
+        billPaidBySelect.appendChild(option);
+      });
+
+      // 更新參與者複選框
+      billParticipantsDiv.innerHTML = '';
+      people.forEach(person => {
+        const label = document.createElement('label');
+        label.className = 'checkbox-label';
+        label.innerHTML = `
+          <input type="checkbox" value="${person.id}" checked />
+          <span>${person.name}</span>
+        `;
+        billParticipantsDiv.appendChild(label);
+      });
+
+      // 顯示帳單區域
+      billSection.classList.remove('hidden');
+      
+      // 禁用人員編輯
+      peopleCountInput.disabled = true;
+      people.forEach((person, index) => {
+        document.getElementById(`person${index + 1}`).disabled = true;
+      });
+      confirmPeopleBtn.disabled = true;
+    }
+
+    // 新增帳單
+    function addBill() {
+      const title = billTitleInput.value.trim();
+      const amount = parseFloat(billAmountInput.value);
+      const paidBy = parseInt(billPaidBySelect.value);
+      
+      const participantCheckboxes = billParticipantsDiv.querySelectorAll('input[type="checkbox"]:checked');
+      const participants = Array.from(participantCheckboxes).map(cb => parseInt(cb.value));
+
+      // 驗證
+      billError.classList.add('hidden');
+      
+      if (!title) {
+        billError.textContent = '請輸入帳單名稱';
+        billError.classList.remove('hidden');
+        return;
+      }
+      
+      if (isNaN(amount) || amount <= 0) {
+        billError.textContent = '請輸入有效的金額';
+        billError.classList.remove('hidden');
+        return;
+      }
+      
+      if (participants.length === 0) {
+        billError.textContent = '請至少選擇一位參與者';
+        billError.classList.remove('hidden');
+        return;
+      }
+
+      // 新增帳單
+      const bill = {
+        id: billIdCounter++,
+        title: title,
+        amount: amount,
+        paidBy: paidBy,
+        participants: participants
+      };
+      
+      bills.push(bill);
+      renderBills();
+      
+      // 清空表單
+      billTitleInput.value = '';
+      billAmountInput.value = '';
+      
+      // 顯示計算按鈕
+      calculateSection.style.display = 'block';
+    }
+
+    // 渲染帳單列表
+    function renderBills() {
+      if (bills.length === 0) {
+        billsListDiv.innerHTML = '<div class="empty-state"><div class="empty-state-icon">📝</div><p>尚未新增任何帳單</p></div>';
+        return;
+      }
+
+      billsListDiv.innerHTML = '<h3 style="margin-bottom: 15px; color: #2d3748;">已新增的帳單</h3>';
+      
+      bills.forEach(bill => {
+        const payer = people.find(p => p.id === bill.paidBy);
+        const participantNames = bill.participants.map(id => 
+          people.find(p => p.id === id)?.name || ''
+        );
+
+        const billDiv = document.createElement('div');
+        billDiv.className = 'bill-item';
+        billDiv.innerHTML = `
+          <div class="bill-header">
+            <div class="bill-title">${bill.title}</div>
+            <div class="bill-amount">$${bill.amount.toFixed(2)}</div>
+          </div>
+          <div class="bill-details">
+            <div class="bill-detail-item">
+              <span class="bill-detail-label">付款人：</span>${payer.name}
+            </div>
+            <div class="bill-detail-item">
+              <span class="bill-detail-label">每人：</span>$${(bill.amount / bill.participants.length).toFixed(2)}
+            </div>
+          </div>
+          <div class="bill-detail-item">
+            <span class="bill-detail-label">參與者：</span>
+            <div class="participant-tags">
+              ${participantNames.map(name => `<span class="participant-tag">${name}</span>`).join('')}
+            </div>
+          </div>
+          <button class="btn-danger" onclick="deleteBill(${bill.id})" style="margin-top: 12px; font-size: 13px; padding: 8px 16px;">
+            🗑️ 刪除
+          </button>
+        `;
+        billsListDiv.appendChild(billDiv);
+      });
+    }
+
+    // 刪除帳單
+    function deleteBill(billId) {
+      bills = bills.filter(b => b.id !== billId);
+      renderBills();
+      
+      if (bills.length === 0) {
+        calculateSection.style.display = 'none';
+      }
+    }
+
+    // 計算分帳
+    async function calculate() {
+      if (bills.length === 0) {
+        alert('請先新增至少一筆帳單！');
+        return;
+      }
+
+      const request = {
+        people: people,
+        bills: bills
+      };
+
+      try {
+        const resultJSON = await window.calculateSplit(JSON.stringify(request));
+        const result = JSON.parse(resultJSON);
+
+        if (result.error) {
+          alert('計算錯誤：' + result.error);
+          return;
+        }
+
+        displayResult(result.settlements);
+      } catch (error) {
+        alert('計算發生錯誤：' + error.message);
+      }
+    }
+
+    // 顯示結果
+    function displayResult(settlements) {
+      resultSection.classList.remove('hidden');
+      
+      if (settlements.length === 0) {
+        resultContent.innerHTML = '<div class="empty-state"><div class="empty-state-icon">✅</div><p>太好了！大家已經結清，不需要轉帳</p></div>';
+        return;
+      }
+
+      let html = '<div style="margin-bottom: 20px;">';
+      settlements.forEach((settlement, index) => {
+        html += `
+          <div class="settlement-item">
+            <div class="settlement-text">
+              <span class="settlement-from">${settlement.from}</span>
+              需要付給
+              <span class="settlement-to">${settlement.to}</span>
+            </div>
+            <div class="settlement-amount">$${settlement.amount.toFixed(2)}</div>
+          </div>
+        `;
+      });
+      html += '</div>';
+      
+      resultContent.innerHTML = html;
+      
+      // 滾動到結果
+      resultSection.scrollIntoView({ behavior: 'smooth' });
+    }
+
+    // 重置
+    function reset() {
+      people = [];
+      bills = [];
+      billIdCounter = 1;
+      
+      peopleCountInput.disabled = false;
+      peopleCountInput.value = 3;
+      confirmPeopleBtn.disabled = false;
+      
+      generatePeopleInputs();
+      
+      billSection.classList.add('hidden');
+      resultSection.classList.add('hidden');
+      calculateSection.style.display = 'none';
+      
+      billTitleInput.value = '';
+      billAmountInput.value = '';
+      billsListDiv.innerHTML = '';
+      billError.classList.add('hidden');
+    }
+
+    // 事件監聽
+    peopleCountInput.addEventListener('input', generatePeopleInputs);
+    confirmPeopleBtn.addEventListener('click', confirmPeople);
+    addBillBtn.addEventListener('click', addBill);
+    calculateBtn.addEventListener('click', calculate);
+    resetBtn.addEventListener('click', reset);
+
+    // 初始化
+    generatePeopleInputs();
+
+    // 全域函式供 inline onclick 使用
+    window.deleteBill = deleteBill;
+  </script>
+</body>
+</html>
