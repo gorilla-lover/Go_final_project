@@ -377,6 +377,86 @@
       color: #718096;
       margin-top: 6px;
     }
+
+    .modal-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.45);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+      z-index: 50;
+    }
+
+    .modal {
+      background: white;
+      border-radius: 14px;
+      padding: 20px;
+      max-width: 360px;
+      width: 100%;
+      box-shadow: 0 12px 40px rgba(0, 0, 0, 0.18);
+    }
+
+    .modal h3 {
+      margin-bottom: 10px;
+      font-size: 18px;
+      color: #2d3748;
+    }
+
+    .modal p {
+      color: #4a5568;
+      font-size: 14px;
+      margin-bottom: 16px;
+      line-height: 1.5;
+    }
+
+    .modal-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 10px;
+    }
+
+    /* 確保彈窗隱藏時不顯示 */
+    .modal-overlay.hidden {
+      display: none;
+    }
+
+    .detail-section {
+      background: #f8fafc;
+      border: 2px dashed #cbd5e0;
+    }
+
+    .detail-card {
+      background: white;
+      border: 1px solid #e2e8f0;
+      border-radius: 12px;
+      padding: 16px;
+      margin-bottom: 12px;
+    }
+
+    .detail-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 8px;
+      font-weight: 700;
+      color: #2d3748;
+    }
+
+    .detail-meta {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 8px;
+      font-size: 13px;
+      color: #4a5568;
+      margin-bottom: 8px;
+    }
+
+    .detail-participants {
+      font-size: 13px;
+      color: #4a5568;
+    }
   </style>
 </head>
 <body>
@@ -479,11 +559,33 @@
           結算結果
         </div>
         <div id="resultContent"></div>
-        <div class="button-group">
+      </div>
+
+      <!-- 步驟 4: 查看明細 -->
+      <div class="section hidden detail-section" id="detailSection">
+        <div class="section-title">
+          <span class="step-number">4</span>
+          查看明細
+        </div>
+        <div class="helper-text" style="margin-bottom: 12px;">顯示每筆支出原幣、換算金額與分攤細節</div>
+        <div id="detailContent"></div>
+        <div class="button-group" style="justify-content: flex-end;">
           <button class="btn-secondary" id="resetBtn">
             🔄 重新開始
           </button>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 重置確認彈窗 -->
+  <div class="modal-overlay hidden" id="resetModal">
+    <div class="modal">
+      <h3>重新開始</h3>
+      <p>確定要重新開始嗎？目前填寫的資料都會清除。</p>
+      <div class="modal-actions">
+        <button class="btn-secondary" id="cancelResetBtn">取消</button>
+        <button class="btn-danger" id="confirmResetBtn">確認清除</button>
       </div>
     </div>
   </div>
@@ -530,6 +632,11 @@
     const resultContent = document.getElementById('resultContent');
     const resetBtn = document.getElementById('resetBtn');
     const billError = document.getElementById('billError');
+    const resetModal = document.getElementById('resetModal');
+    const cancelResetBtn = document.getElementById('cancelResetBtn');
+    const confirmResetBtn = document.getElementById('confirmResetBtn');
+    let detailSectionEl;
+    let detailContentEl;
 
     // 幣別選單初始化
     function populateCurrencySelect(selectEl, defaultCode) {
@@ -556,6 +663,7 @@
         return { ...bill, amountBase: converted === null ? bill.amountBase : converted };
       });
       renderBills();
+      renderDetails();
     }
 
     async function fetchRates() {
@@ -711,6 +819,7 @@
     function renderBills() {
       if (bills.length === 0) {
         billsListDiv.innerHTML = '<div class="empty-state"><div class="empty-state-icon">📝</div><p>尚未新增任何帳單</p></div>';
+        renderDetails();
         return;
       }
 
@@ -759,6 +868,8 @@
         `;
         billsListDiv.appendChild(billDiv);
       });
+
+      renderDetails();
     }
 
     // 刪除帳單
@@ -769,6 +880,7 @@
       if (bills.length === 0) {
         calculateSection.style.display = 'none';
       }
+      renderDetails();
     }
 
     // 計算分帳
@@ -811,11 +923,13 @@
       } catch (error) {
         alert('計算發生錯誤：' + error.message);
       }
+      renderDetails();
     }
 
     // 顯示結果
     function displayResult(settlements) {
       resultSection.classList.remove('hidden');
+      detailSectionEl.classList.remove('hidden');
       
       if (settlements.length === 0) {
         resultContent.innerHTML = '<div class="empty-state"><div class="empty-state-icon">✅</div><p>太好了！大家已經結清，不需要轉帳</p></div>';
@@ -862,6 +976,7 @@
       
       billSection.classList.add('hidden');
       resultSection.classList.add('hidden');
+      detailSectionEl.classList.add('hidden');
       calculateSection.style.display = 'none';
       
       billTitleInput.value = '';
@@ -869,6 +984,41 @@
       billAmountInput.value = '';
       billsListDiv.innerHTML = '';
       billError.classList.add('hidden');
+      detailContentEl.innerHTML = '';
+      closeResetModal();
+    }
+
+    function renderDetails() {
+      if (!detailContentEl) return;
+      if (bills.length === 0) {
+        detailContentEl.innerHTML = '<div class="empty-state"><div class="empty-state-icon">📄</div><p>目前沒有明細</p></div>';
+        return;
+      }
+
+      let html = '';
+      bills.forEach(bill => {
+        const payer = people.find(p => p.id === bill.paidBy);
+        const baseAmount = bill.amountBase ?? bill.amount;
+        const perPerson = baseAmount / bill.participants.length;
+        const participantNames = bill.participants.map(id => people.find(p => p.id === id)?.name || '').join('、');
+        html += `
+          <div class="detail-card">
+            <div class="detail-header">
+              <div>${bill.title}</div>
+              <div style="color:#667eea;font-weight:700;">${bill.currency || baseCurrency} ${bill.amount.toFixed(2)}</div>
+            </div>
+            <div class="detail-meta">
+              <div>分類：${bill.category || '無分類'}</div>
+              <div>付款人：${payer ? payer.name : '未知'}</div>
+              <div>換算為 ${baseCurrency}：${baseAmount.toFixed(2)}</div>
+              <div>每人（${baseCurrency}）：${perPerson.toFixed(2)}</div>
+            </div>
+            <div class="detail-participants">參與者：${participantNames}</div>
+          </div>
+        `;
+      });
+
+      detailContentEl.innerHTML = html;
     }
 
     // 事件監聽
@@ -876,7 +1026,30 @@
     confirmPeopleBtn.addEventListener('click', confirmPeople);
     addBillBtn.addEventListener('click', addBill);
     calculateBtn.addEventListener('click', calculate);
-    resetBtn.addEventListener('click', reset);
+    function openResetModal() {
+      if (!resetModal) return;
+      resetModal.classList.remove('hidden');
+      document.body.style.overflow = 'hidden';
+    }
+
+    function closeResetModal() {
+      if (!resetModal) return;
+      resetModal.classList.add('hidden');
+      document.body.style.overflow = '';
+    }
+
+    resetBtn.addEventListener('click', openResetModal);
+    cancelResetBtn.addEventListener('click', closeResetModal);
+    resetModal.addEventListener('click', (e) => {
+      if (e.target === resetModal) closeResetModal();
+    });
+    confirmResetBtn.addEventListener('click', () => {
+      closeResetModal();
+      reset();
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') closeResetModal();
+    });
     baseCurrencySelect.addEventListener('change', () => {
       baseCurrency = baseCurrencySelect.value;
       lastBillCurrency = baseCurrency;
@@ -885,6 +1058,8 @@
     });
 
     // 初始化
+    detailSectionEl = document.getElementById('detailSection');
+    detailContentEl = document.getElementById('detailContent');
     populateCurrencySelect(baseCurrencySelect, baseCurrency);
     populateCurrencySelect(billCurrencySelect, lastBillCurrency);
     fetchRates();
