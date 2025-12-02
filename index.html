@@ -371,6 +371,12 @@
       margin-top: 12px;
       font-size: 14px;
     }
+
+    .helper-text {
+      font-size: 12px;
+      color: #718096;
+      margin-top: 6px;
+    }
   </style>
 </head>
 <body>
@@ -390,6 +396,11 @@
         <div class="form-group">
           <label>參與人數（最多 20 人）</label>
           <input type="number" id="peopleCount" min="2" max="20" value="3" />
+        </div>
+        <div class="form-group">
+          <label>預設幣別</label>
+          <select id="baseCurrency"></select>
+          <div id="rateInfo" class="helper-text">使用最新匯率中…</div>
         </div>
         <div id="peopleInputs" class="people-grid"></div>
         <div class="button-group">
@@ -421,6 +432,11 @@
             <option value="娛樂">娛樂</option>
             <option value="其他">其他</option>
           </select>
+        </div>
+
+        <div class="form-group">
+          <label>幣別</label>
+          <select id="billCurrency"></select>
         </div>
 
         <div class="form-group">
@@ -474,6 +490,21 @@
 
   <script>
     const MAX_PEOPLE = 20;
+    const CURRENCIES = [
+      { code: 'TWD', label: '新台幣 (TWD)' },
+      { code: 'USD', label: '美金 (USD)' },
+      { code: 'EUR', label: '歐元 (EUR)' },
+      { code: 'JPY', label: '日圓 (JPY)' },
+      { code: 'KRW', label: '韓元 (KRW)' },
+      { code: 'HKD', label: '港幣 (HKD)' },
+      { code: 'CNY', label: '人民幣 (CNY)' },
+      { code: 'GBP', label: '英鎊 (GBP)' },
+      { code: 'THB', label: '泰銖 (THB)' },
+    ];
+    let baseCurrency = 'TWD';
+    let lastBillCurrency = baseCurrency;
+    let rates = {}; // 以 baseCurrency 為基準的匯率
+    let rateDate = '';
     let people = [];
     let bills = [];
     let billIdCounter = 1;
@@ -485,6 +516,9 @@
     const billSection = document.getElementById('billSection');
     const billTitleInput = document.getElementById('billTitle');
     const billCategorySelect = document.getElementById('billCategory');
+    const baseCurrencySelect = document.getElementById('baseCurrency');
+    const billCurrencySelect = document.getElementById('billCurrency');
+    const rateInfo = document.getElementById('rateInfo');
     const billAmountInput = document.getElementById('billAmount');
     const billPaidBySelect = document.getElementById('billPaidBy');
     const billParticipantsDiv = document.getElementById('billParticipants');
@@ -496,6 +530,52 @@
     const resultContent = document.getElementById('resultContent');
     const resetBtn = document.getElementById('resetBtn');
     const billError = document.getElementById('billError');
+
+    // 幣別選單初始化
+    function populateCurrencySelect(selectEl, defaultCode) {
+      selectEl.innerHTML = '';
+      CURRENCIES.forEach(curr => {
+        const option = document.createElement('option');
+        option.value = curr.code;
+        option.textContent = curr.label;
+        selectEl.appendChild(option);
+      });
+      selectEl.value = defaultCode;
+    }
+
+    function convertToBase(amount, currency) {
+      if (currency === baseCurrency) return amount;
+      const rate = rates[currency.toLowerCase()];
+      if (!rate) return null; // 無匯率資料
+      return amount / rate;
+    }
+
+    function recomputeBillBaseAmounts() {
+      bills = bills.map(bill => {
+        const converted = convertToBase(bill.amount, bill.currency);
+        return { ...bill, amountBase: converted === null ? bill.amountBase : converted };
+      });
+      renderBills();
+    }
+
+    async function fetchRates() {
+      const base = baseCurrency.toLowerCase();
+      rateInfo.textContent = '匯率載入中…';
+      rates = {};
+      try {
+        const res = await fetch(`https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/v1/currencies/${base}.json`);
+        if (!res.ok) throw new Error('匯率讀取失敗');
+        const data = await res.json();
+        rates = data[base] || {};
+        rateDate = data.date || '';
+        rateInfo.textContent = `基準幣別：${baseCurrency}；更新於 ${rateDate || '最新'}`;
+        recomputeBillBaseAmounts();
+      } catch (err) {
+        rateInfo.textContent = `匯率讀取失敗，僅能使用 ${baseCurrency}（請檢查網路）`;
+        rates = {};
+        recomputeBillBaseAmounts();
+      }
+    }
 
     // 生成人員輸入框
     function generatePeopleInputs() {
@@ -568,6 +648,7 @@
       const title = billTitleInput.value.trim();
       const amount = parseFloat(billAmountInput.value);
       const category = billCategorySelect.value;
+      const currency = billCurrencySelect.value || baseCurrency;
       const paidBy = parseInt(billPaidBySelect.value);
       
       const participantCheckboxes = billParticipantsDiv.querySelectorAll('input[type="checkbox"]:checked');
@@ -593,12 +674,21 @@
         billError.classList.remove('hidden');
         return;
       }
+      
+      const amountBase = convertToBase(amount, currency);
+      if (amountBase === null) {
+        billError.textContent = '缺少該幣別的匯率，請先更新匯率或改用基準幣別';
+        billError.classList.remove('hidden');
+        return;
+      }
 
       // 新增帳單
       const bill = {
         id: billIdCounter++,
         title: title,
         amount: amount,
+        amountBase: amountBase,
+        currency: currency,
         category: category,
         paidBy: paidBy,
         participants: participants
@@ -606,6 +696,8 @@
       
       bills.push(bill);
       renderBills();
+      lastBillCurrency = currency;
+      billCurrencySelect.value = currency;
       
       // 清空表單
       billTitleInput.value = '';
@@ -630,24 +722,29 @@
           people.find(p => p.id === id)?.name || ''
         );
         const categoryLabel = bill.category ? bill.category : '無分類';
+        const baseAmount = bill.amountBase ?? bill.amount;
+        const perPersonBase = baseAmount / bill.participants.length;
 
         const billDiv = document.createElement('div');
         billDiv.className = 'bill-item';
         billDiv.innerHTML = `
           <div class="bill-header">
             <div class="bill-title">${bill.title}</div>
-            <div class="bill-amount">$${bill.amount.toFixed(2)}</div>
+            <div class="bill-amount">${bill.currency || baseCurrency} ${bill.amount.toFixed(2)}</div>
           </div>
           <div class="bill-details">
             <div class="bill-detail-item">
               <span class="bill-detail-label">付款人：</span>${payer.name}
             </div>
             <div class="bill-detail-item">
-              <span class="bill-detail-label">每人：</span>$${(bill.amount / bill.participants.length).toFixed(2)}
+              <span class="bill-detail-label">每人（${baseCurrency}）：</span>${perPersonBase.toFixed(2)}
             </div>
             <div class="bill-detail-item">
               <span class="bill-detail-label">分類：</span>
               <span class="category-badge">${categoryLabel}</span>
+            </div>
+            <div class="bill-detail-item">
+              <span class="bill-detail-label">換算為 ${baseCurrency}：</span>${bill.amountBase.toFixed(2)}
             </div>
           </div>
           <div class="bill-detail-item">
@@ -681,12 +778,27 @@
         return;
       }
 
-      const request = {
-        people: people,
-        bills: bills
-      };
-
       try {
+        const payloadBills = bills.map(bill => {
+          if (bill.amountBase === null || bill.amountBase === undefined) {
+            throw new Error(`缺少 ${bill.currency} 對 ${baseCurrency} 的匯率，無法計算`);
+          }
+          return {
+            id: bill.id,
+            title: bill.title,
+            amount: bill.amountBase,
+            category: bill.category,
+            currency: bill.currency,
+            paidBy: bill.paidBy,
+            participants: bill.participants
+          };
+        });
+
+        const request = {
+          people: people,
+          bills: payloadBills
+        };
+
         const resultJSON = await window.calculateSplit(JSON.stringify(request));
         const result = JSON.parse(resultJSON);
 
@@ -736,6 +848,11 @@
       people = [];
       bills = [];
       billIdCounter = 1;
+      baseCurrency = 'TWD';
+      lastBillCurrency = baseCurrency;
+      populateCurrencySelect(baseCurrencySelect, baseCurrency);
+      populateCurrencySelect(billCurrencySelect, lastBillCurrency);
+      fetchRates();
       
       peopleCountInput.disabled = false;
       peopleCountInput.value = 3;
@@ -760,8 +877,17 @@
     addBillBtn.addEventListener('click', addBill);
     calculateBtn.addEventListener('click', calculate);
     resetBtn.addEventListener('click', reset);
+    baseCurrencySelect.addEventListener('change', () => {
+      baseCurrency = baseCurrencySelect.value;
+      lastBillCurrency = baseCurrency;
+      billCurrencySelect.value = lastBillCurrency;
+      fetchRates();
+    });
 
     // 初始化
+    populateCurrencySelect(baseCurrencySelect, baseCurrency);
+    populateCurrencySelect(billCurrencySelect, lastBillCurrency);
+    fetchRates();
     generatePeopleInputs();
 
     // 全域函式供 inline onclick 使用

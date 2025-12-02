@@ -24,6 +24,7 @@ type Bill struct {
 	Title        string  `json:"title"`
 	Amount       float64 `json:"amount"`
 	Category     string  `json:"category,omitempty"` // 帳單分類（交通、飲食、住宿等）
+	Currency     string  `json:"currency,omitempty"` // 帳單幣別（例如 TWD, USD）
 	PaidBy       int     `json:"paidBy"`       // 誰先付的（Person ID）
 	Participants []int   `json:"participants"` // 參與者的 ID 列表
 }
