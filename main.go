@@ -117,7 +117,7 @@ func runDesktop() {
 
 	// 桌面版也可以綁定同步函數，讓邏輯統一
 	w.Bind("calculateSplit", processCalculate)
-	
+
 	// 桌面版目前維持原本行為，若要支援同步需改用 API 呼叫模式
 	// 這裡為了相容性，傳入 HTML
 	dataURI := "data:text/html;charset=utf-8," + url.PathEscape(indexHTML)
@@ -155,6 +155,8 @@ func runServer(port string) {
 	fmt.Printf("電腦本機請開： http://localhost:%s\n", port)
 	if ip != "" {
 		fmt.Printf("手機請連線至： http://%s:%s\n", ip, port)
+	} else {
+		fmt.Println("警告：無法偵測到可用的實體網路介面")
 	}
 	fmt.Println("現在所有連線裝置將會看到相同的帳單資料。")
 	fmt.Println("========================================")
@@ -165,7 +167,7 @@ func runServer(port string) {
 // handleSync 處理狀態同步
 func handleSync(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	
+
 	stateMutex.Lock()
 	defer stateMutex.Unlock()
 
@@ -217,27 +219,94 @@ func processCalculate(requestJSON string) string {
 	return string(result)
 }
 
-// 其餘輔助函式 (IP, Rate, Parse) 保持不變
+// getLocalIP 改良版：篩選出真實的實體網卡
 func getLocalIP() string {
-	addrs, err := net.InterfaceAddrs()
-	if err != nil { return "" }
-	for _, address := range addrs {
-		if ipnet, ok := address.(*net.IPNet); ok && !ipnet.IP.IsLoopback() {
-			if ipnet.IP.To4() != nil { return ipnet.IP.String() }
+	// 取得所有網路介面
+	interfaces, err := net.Interfaces()
+	if err != nil {
+		return ""
+	}
+
+	// 虛擬網卡的常見名稱前綴
+	virtualPrefixes := []string{
+		"docker", "veth", "br-", "virbr", "vmnet", "vbox",
+		"utun", "tap", "tun", "ppp", "awdl", "llw", "bridge",
+		"vEthernet", "Hyper-V", "VirtualBox", "VMware",
+	}
+
+	var candidates []string
+
+	for _, iface := range interfaces {
+		// 跳過未啟用的介面
+		if iface.Flags&net.FlagUp == 0 {
+			continue
+		}
+
+		// 跳過 loopback
+		if iface.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+
+		// 檢查是否為虛擬網卡（名稱比對）
+		name := strings.ToLower(iface.Name)
+		isVirtual := false
+		for _, prefix := range virtualPrefixes {
+			if strings.HasPrefix(name, strings.ToLower(prefix)) {
+				isVirtual = true
+				break
+			}
+		}
+		if isVirtual {
+			continue
+		}
+
+		// 取得該介面的 IP 位址
+		addrs, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+
+		for _, addr := range addrs {
+			ipNet, ok := addr.(*net.IPNet)
+			if !ok {
+				continue
+			}
+
+			// 只要 IPv4 且非 loopback
+			ipv4 := ipNet.IP.To4()
+			if ipv4 != nil && !ipNet.IP.IsLoopback() {
+				// 優先選擇 192.168.x.x 或 10.x.x.x (常見的內網區段)
+				if strings.HasPrefix(ipv4.String(), "192.168.") ||
+					strings.HasPrefix(ipv4.String(), "10.") {
+					candidates = append([]string{ipv4.String()}, candidates...)
+				} else {
+					candidates = append(candidates, ipv4.String())
+				}
+			}
 		}
 	}
+
+	// 回傳第一個候選 IP
+	if len(candidates) > 0 {
+		return candidates[0]
+	}
+
 	return ""
 }
 
 func convertBillsToBase(base string, bills []Bill) ([]Bill, string, error) {
 	baseLower := strings.ToLower(base)
 	rates, err := getRates(baseLower)
-	if err != nil { return nil, rates.Date, err }
+	if err != nil {
+		return nil, rates.Date, err
+	}
 
 	var converted []Bill
 	for _, bill := range bills {
 		cur := strings.ToLower(strings.TrimSpace(bill.Currency))
-		if cur == "" { cur = baseLower }
+		if cur == "" {
+			cur = baseLower
+		}
 		var amountBase float64
 		if cur == baseLower {
 			amountBase = bill.Amount
@@ -257,11 +326,15 @@ func convertBillsToBase(base string, bills []Bill) ([]Bill, string, error) {
 func getRates(base string) (rateEntry, error) {
 	now := time.Now()
 	if entry, ok := rateCache[base]; ok {
-		if now.Sub(entry.FetchedAt) < rateCacheTTL { return entry, nil }
+		if now.Sub(entry.FetchedAt) < rateCacheTTL {
+			return entry, nil
+		}
 	}
 	entry, err := fetchRates(base)
 	if err != nil {
-		if cached, ok := rateCache[base]; ok { return cached, nil }
+		if cached, ok := rateCache[base]; ok {
+			return cached, nil
+		}
 		return rateEntry{}, err
 	}
 	rateCache[base] = entry
@@ -272,7 +345,9 @@ func fetchRates(base string) (rateEntry, error) {
 	var lastErr error
 	for i := 0; i < 2; i++ {
 		entry, err := fetchRatesOnce(base)
-		if err == nil { return entry, nil }
+		if err == nil {
+			return entry, nil
+		}
 		lastErr = err
 		time.Sleep(time.Duration(i+1) * 200 * time.Millisecond)
 	}
@@ -282,24 +357,38 @@ func fetchRates(base string) (rateEntry, error) {
 func fetchRatesOnce(base string) (rateEntry, error) {
 	url := fmt.Sprintf(exchangeAPIBase, base)
 	resp, err := http.Get(url)
-	if err != nil { return rateEntry{}, err }
+	if err != nil {
+		return rateEntry{}, err
+	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK { return rateEntry{}, fmt.Errorf("HTTP %d", resp.StatusCode) }
+	if resp.StatusCode != http.StatusOK {
+		return rateEntry{}, fmt.Errorf("HTTP %d", resp.StatusCode)
+	}
 	body, err := io.ReadAll(resp.Body)
-	if err != nil { return rateEntry{}, err }
+	if err != nil {
+		return rateEntry{}, err
+	}
 	return parseRateResponse(base, body)
 }
 
 func parseRateResponse(base string, data []byte) (rateEntry, error) {
 	var raw map[string]json.RawMessage
-	if err := json.Unmarshal(data, &raw); err != nil { return rateEntry{}, err }
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return rateEntry{}, err
+	}
 	var date string
-	if v, ok := raw["date"]; ok { json.Unmarshal(v, &date) }
+	if v, ok := raw["date"]; ok {
+		json.Unmarshal(v, &date)
+	}
 	baseKey := strings.ToLower(base)
 	rateRaw, ok := raw[baseKey]
-	if !ok { return rateEntry{}, errors.New("無匯率資料") }
+	if !ok {
+		return rateEntry{}, errors.New("無匯率資料")
+	}
 	rates := make(map[string]float64)
-	if err := json.Unmarshal(rateRaw, &rates); err != nil { return rateEntry{}, err }
+	if err := json.Unmarshal(rateRaw, &rates); err != nil {
+		return rateEntry{}, err
+	}
 	rates[baseKey] = 1
 	return rateEntry{Rates: rates, Date: date}, nil
 }
@@ -312,17 +401,36 @@ func calculate(people []Person, bills []Bill) []Settlement {
 		nameMap[p.ID] = p.Name
 	}
 	for _, bill := range bills {
-		if len(bill.Participants) == 0 { continue }
+		if len(bill.Participants) == 0 {
+			continue
+		}
 		amt := bill.AmountBase
-		if amt == 0 { amt = bill.Amount }
+		if amt == 0 {
+			amt = bill.Amount
+		}
 		perPerson := amt / float64(len(bill.Participants))
 		balance[bill.PaidBy] += amt
-		for _, pid := range bill.Participants { balance[pid] -= perPerson }
+		for _, pid := range bill.Participants {
+			balance[pid] -= perPerson
+		}
 	}
-	var creditors, debtors []struct{ id int; amount float64 }
+	var creditors, debtors []struct {
+		id     int
+		amount float64
+	}
 	for id, amt := range balance {
-		if amt > 0.01 { creditors = append(creditors, struct{ id int; amount float64 }{id, amt}) }
-		if amt < -0.01 { debtors = append(debtors, struct{ id int; amount float64 }{id, -amt}) }
+		if amt > 0.01 {
+			creditors = append(creditors, struct {
+				id     int
+				amount float64
+			}{id, amt})
+		}
+		if amt < -0.01 {
+			debtors = append(debtors, struct {
+				id     int
+				amount float64
+			}{id, -amt})
+		}
 	}
 	var settlements []Settlement
 	i, j := 0, 0
@@ -330,12 +438,18 @@ func calculate(people []Person, bills []Bill) []Settlement {
 		cred := creditors[i]
 		debt := debtors[j]
 		amt := cred.amount
-		if debt.amount < amt { amt = debt.amount }
+		if debt.amount < amt {
+			amt = debt.amount
+		}
 		settlements = append(settlements, Settlement{From: nameMap[debt.id], To: nameMap[cred.id], Amount: amt})
 		creditors[i].amount -= amt
 		debtors[j].amount -= amt
-		if creditors[i].amount < 0.01 { i++ }
-		if debtors[j].amount < 0.01 { j++ }
+		if creditors[i].amount < 0.01 {
+			i++
+		}
+		if debtors[j].amount < 0.01 {
+			j++
+		}
 	}
 	return settlements
 }
