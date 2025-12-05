@@ -600,14 +600,15 @@
       { code: 'KRW', label: '韓元 (KRW)' },
       { code: 'HKD', label: '港幣 (HKD)' },
       { code: 'CNY', label: '人民幣 (CNY)' },
-      { code: 'GBP', label: '英鎊 (GBP)' },
-      { code: 'THB', label: '泰銖 (THB)' },
     ];
+    
+    // 狀態變數
     let baseCurrency = 'TWD';
     let lastBillCurrency = baseCurrency;
     let people = [];
     let bills = [];
     let billIdCounter = 1;
+    let lastServerUpdate = 0; // 用於判斷是否需要重新渲染
 
     // DOM 元素
     const peopleCountInput = document.getElementById('peopleCount');
@@ -633,10 +634,121 @@
     const resetModal = document.getElementById('resetModal');
     const cancelResetBtn = document.getElementById('cancelResetBtn');
     const confirmResetBtn = document.getElementById('confirmResetBtn');
-    let detailSectionEl;
-    let detailContentEl;
+    let detailSectionEl = document.getElementById('detailSection');
+    let detailContentEl = document.getElementById('detailContent');
 
-    // 幣別選單初始化
+    // 初始化
+    populateCurrencySelect(baseCurrencySelect, baseCurrency);
+    populateCurrencySelect(billCurrencySelect, lastBillCurrency);
+    generatePeopleInputs();
+    
+    // 啟動時嘗試從伺服器同步資料
+    syncFromServer();
+    // 設定定時器，每 2 秒自動同步一次
+    setInterval(syncFromServer, 2000);
+
+    // ================== 同步核心功能 ==================
+
+    async function syncFromServer() {
+      // 只有在 Server 模式下 (沒有 window.calculateSplit) 才執行自動同步
+      // 這樣桌面版還是可以獨立運作
+      if (window.calculateSplit) return;
+
+      try {
+        const response = await fetch('/api/sync');
+        if (!response.ok) return;
+        
+        const state = await response.json();
+        
+        // 只有當伺服器資料比本地新，或本地是空的時才更新
+        if (state.lastUpdated > lastServerUpdate || (state.people.length > 0 && people.length === 0)) {
+          lastServerUpdate = state.lastUpdated;
+          
+          // 更新本地狀態
+          people = state.people || [];
+          bills = state.bills || [];
+          baseCurrency = state.baseCurrency || 'TWD';
+          
+          // 重新計算 ID Counter，避免重複
+          if (bills.length > 0) {
+            const maxId = Math.max(...bills.map(b => b.id));
+            billIdCounter = maxId + 1;
+          }
+
+          // 更新 UI
+          if (people.length > 0) {
+            updateUIForExistingProject();
+          } else {
+            // 如果伺服器是空的，顯示初始畫面
+            resetUI();
+          }
+        }
+      } catch (e) {
+        console.log("同步略過：無法連接伺服器");
+      }
+    }
+
+    async function pushToServer() {
+      if (window.calculateSplit) return; // 桌面版不需推送
+
+      const state = {
+        people: people,
+        bills: bills,
+        baseCurrency: baseCurrency
+      };
+
+      try {
+        await fetch('/api/sync', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(state)
+        });
+        // 推送完立即再拉一次以確保版本號同步
+        syncFromServer();
+      } catch (e) {
+        alert("無法儲存至伺服器，請檢查連線");
+      }
+    }
+
+    // 當從伺服器載入既有專案時，更新畫面
+    function updateUIForExistingProject() {
+      // 隱藏人員設定，顯示帳單區域
+      peopleCountInput.disabled = true;
+      confirmPeopleBtn.disabled = true;
+      confirmPeopleBtn.innerText = "✓ 人員已設定";
+      
+      // 重建人員選單
+      billPaidBySelect.innerHTML = '';
+      people.forEach(person => {
+        const option = document.createElement('option');
+        option.value = person.id;
+        option.textContent = person.name;
+        billPaidBySelect.appendChild(option);
+      });
+
+      // 重建參與者選單 (注意：這裡不應覆蓋使用者正在選的狀態，簡單起見先重建)
+      // 優化：如果 DOM 已經存在且數量一致，就不重建，避免輸入中斷
+      if (billParticipantsDiv.children.length !== people.length) {
+        billParticipantsDiv.innerHTML = '';
+        people.forEach(person => {
+          const label = document.createElement('label');
+          label.className = 'checkbox-label';
+          label.innerHTML = `<input type="checkbox" value="${person.id}" checked /><span>${person.name}</span>`;
+          billParticipantsDiv.appendChild(label);
+        });
+      }
+
+      billSection.classList.remove('hidden');
+      baseCurrencySelect.value = baseCurrency;
+      
+      renderBills();
+      if (bills.length > 0) {
+        calculateSection.style.display = 'block';
+      }
+    }
+
+    // ================== 原有功能修改 ==================
+
     function populateCurrencySelect(selectEl, defaultCode) {
       selectEl.innerHTML = '';
       CURRENCIES.forEach(curr => {
@@ -648,105 +760,52 @@
       selectEl.value = defaultCode;
     }
 
-    // 生成人員輸入框
     function generatePeopleInputs() {
+      if (people.length > 0) return; // 已鎖定則不生成
       const count = Math.min(Math.max(2, parseInt(peopleCountInput.value) || 2), MAX_PEOPLE);
       peopleCountInput.value = count;
-      
       peopleInputsDiv.innerHTML = '';
       for (let i = 1; i <= count; i++) {
         const div = document.createElement('div');
         div.className = 'person-input';
-        div.innerHTML = `
-          <div class="person-number">${i}</div>
-          <input type="text" id="person${i}" placeholder="人員 ${i} 的名稱" value="人員 ${i}" />
-        `;
+        div.innerHTML = `<div class="person-number">${i}</div><input type="text" id="person${i}" placeholder="人員 ${i}" value="人員 ${i}" />`;
         peopleInputsDiv.appendChild(div);
       }
     }
 
-    // 確認人員
     function confirmPeople() {
       const count = parseInt(peopleCountInput.value);
-      people = [];
-      
+      let newPeople = [];
       for (let i = 1; i <= count; i++) {
         const name = document.getElementById(`person${i}`).value.trim();
-        if (name) {
-          people.push({ id: i, name: name });
-        }
+        if (name) newPeople.push({ id: i, name: name });
       }
 
-      if (people.length < 2) {
+      if (newPeople.length < 2) {
         alert('至少需要 2 個人！');
         return;
       }
-
-      // 更新付款人下拉選單
-      billPaidBySelect.innerHTML = '';
-      people.forEach(person => {
-        const option = document.createElement('option');
-        option.value = person.id;
-        option.textContent = person.name;
-        billPaidBySelect.appendChild(option);
-      });
-
-      // 更新參與者複選框
-      billParticipantsDiv.innerHTML = '';
-      people.forEach(person => {
-        const label = document.createElement('label');
-        label.className = 'checkbox-label';
-        label.innerHTML = `
-          <input type="checkbox" value="${person.id}" checked />
-          <span>${person.name}</span>
-        `;
-        billParticipantsDiv.appendChild(label);
-      });
-
-      // 顯示帳單區域
-      billSection.classList.remove('hidden');
       
-      // 禁用人員編輯
-      peopleCountInput.disabled = true;
-      people.forEach((person, index) => {
-        document.getElementById(`person${index + 1}`).disabled = true;
-      });
-      confirmPeopleBtn.disabled = true;
+      people = newPeople;
+      // 立即推送至伺服器
+      pushToServer();
+      updateUIForExistingProject();
     }
 
-    // 新增帳單
     function addBill() {
       const title = billTitleInput.value.trim();
       const amount = parseFloat(billAmountInput.value);
       const category = billCategorySelect.value;
       const currency = billCurrencySelect.value || baseCurrency;
       const paidBy = parseInt(billPaidBySelect.value);
-      
       const participantCheckboxes = billParticipantsDiv.querySelectorAll('input[type="checkbox"]:checked');
       const participants = Array.from(participantCheckboxes).map(cb => parseInt(cb.value));
 
-      // 驗證
       billError.classList.add('hidden');
-      
-      if (!title) {
-        billError.textContent = '請輸入帳單名稱';
-        billError.classList.remove('hidden');
-        return;
-      }
-      
-      if (isNaN(amount) || amount <= 0) {
-        billError.textContent = '請輸入有效的金額';
-        billError.classList.remove('hidden');
-        return;
-      }
-      
-      if (participants.length === 0) {
-        billError.textContent = '請至少選擇一位參與者';
-        billError.classList.remove('hidden');
-        return;
-      }
+      if (!title) { billError.textContent = '請輸入帳單名稱'; billError.classList.remove('hidden'); return; }
+      if (isNaN(amount) || amount <= 0) { billError.textContent = '請輸入有效金額'; billError.classList.remove('hidden'); return; }
+      if (participants.length === 0) { billError.textContent = '請選擇參與者'; billError.classList.remove('hidden'); return; }
 
-      // 新增帳單
       const bill = {
         id: billIdCounter++,
         title: title,
@@ -758,19 +817,21 @@
       };
       
       bills.push(bill);
-      renderBills();
+      
+      // 推送更新
+      pushToServer();
+
+      // UI 處理
       lastBillCurrency = currency;
       billCurrencySelect.value = currency;
-      
-      // 清空表單
       billTitleInput.value = '';
       billAmountInput.value = '';
-      
-      // 顯示計算按鈕
       calculateSection.style.display = 'block';
+      
+      // 暫時本地渲染，等待 Server 同步確認
+      renderBills();
     }
 
-    // 渲染帳單列表
     function renderBills() {
       if (bills.length === 0) {
         billsListDiv.innerHTML = '<div class="empty-state"><div class="empty-state-icon">📝</div><p>尚未新增任何帳單</p></div>';
@@ -781,11 +842,16 @@
       billsListDiv.innerHTML = '<h3 style="margin-bottom: 15px; color: #2d3748;">已新增的帳單</h3>';
       
       bills.forEach(bill => {
-        const payer = people.find(p => p.id === bill.paidBy);
+        // 安全檢查：避免同步過程中人員資料尚未載入導致報錯
+        const payer = people.find(p => p.id === bill.paidBy) || { name: '未知' };
+        
         const participantNames = bill.participants.map(id => 
           people.find(p => p.id === id)?.name || ''
-        );
+        ).filter(n => n !== ''); // 過濾掉找不到名字的
+        
         const categoryLabel = bill.category ? bill.category : '無分類';
+        
+        // 只有在按下計算後，後端才會回傳 amountBase，否則為 undefined
         const baseAmount = bill.amountBase;
         const perPersonBase = baseAmount ? baseAmount / bill.participants.length : null;
 
@@ -827,69 +893,58 @@
       renderDetails();
     }
 
-    // 刪除帳單
     function deleteBill(billId) {
+      if(!confirm("確定刪除此帳單？")) return;
       bills = bills.filter(b => b.id !== billId);
+      pushToServer();
       renderBills();
-      
-      if (bills.length === 0) {
-        calculateSection.style.display = 'none';
-      }
-      renderDetails();
+      if (bills.length === 0) calculateSection.style.display = 'none';
     }
 
-    // 計算分帳
     async function calculate() {
-      if (bills.length === 0) {
-        alert('請先新增至少一筆帳單！');
-        return;
-      }
-
-      const request = {
-        baseCurrency: baseCurrency,
-        people: people,
-        bills: bills
-      };
-
+      if (bills.length === 0) return;
+      const request = { baseCurrency: baseCurrency, people: people, bills: bills };
+      
       try {
-        const resultJSON = await window.calculateSplit(JSON.stringify(request));
-        const result = JSON.parse(resultJSON);
-
-        if (result.error) {
-          alert('計算錯誤：' + result.error);
-          return;
-        }
-
-        if (result.baseCurrency) {
-          baseCurrency = result.baseCurrency;
-          baseCurrencySelect.value = baseCurrency;
-        }
-
-        // 更新匯率資訊提示
-        if (result.rateDate) {
-          rateInfo.textContent = `基準幣別：${baseCurrency}；匯率日期：${result.rateDate}`;
+        let resultJSON;
+        if (window.calculateSplit) {
+          resultJSON = await window.calculateSplit(JSON.stringify(request));
         } else {
-          rateInfo.textContent = `基準幣別：${baseCurrency}；匯率由 Go 端計算時取得`;
+          // 計算還是走原本的 API
+          const response = await fetch('/api/calculate', {
+            method: 'POST',
+            body: JSON.stringify(request)
+          });
+          resultJSON = await response.text();
+        }
+        
+        const result = JSON.parse(resultJSON);
+        if (result.error) { alert(result.error); return; }
+
+        // 如果後端有更新 baseCurrency (例如自動轉大寫)，同步回來
+        if (result.baseCurrency && result.baseCurrency !== baseCurrency) {
+            baseCurrency = result.baseCurrency;
+            pushToServer(); // 更新設定到伺服器
         }
 
-        // 用回傳的換算後帳單更新本地資料，保留排序與其他欄位
+        // 更新帳單的匯率換算結果到本地顯示用 (不存回資料庫，因為那只是顯示)
         if (Array.isArray(result.bills)) {
           const mapById = new Map(result.bills.map(b => [b.id, b]));
-          bills = bills.map(b => {
-            const converted = mapById.get(b.id);
-            return converted ? { ...b, amountBase: converted.amountBase } : b;
+          // 這裡我們只更新本地 bills 的 amountBase 用於顯示，不 pushToServer
+          // 避免把計算結果當作原始資料存回去
+          bills.forEach(b => {
+             const calc = mapById.get(b.id);
+             if(calc) b.amountBase = calc.amountBase;
           });
-          renderBills();
           renderDetails();
         }
 
         displayResult(result.settlements);
-      } catch (error) {
-        alert('計算發生錯誤：' + error.message);
+      } catch (e) {
+        alert(e.message);
       }
     }
 
-    // 顯示結果
     function displayResult(settlements) {
       resultSection.classList.remove('hidden');
       detailSectionEl.classList.remove('hidden');
@@ -900,7 +955,7 @@
       }
 
       let html = '<div style="margin-bottom: 20px;">';
-      settlements.forEach((settlement, index) => {
+      settlements.forEach((settlement) => {
         html += `
           <div class="settlement-item">
             <div class="settlement-text">
@@ -915,43 +970,37 @@
       html += '</div>';
       
       resultContent.innerHTML = html;
-      
-      // 滾動到結果
       resultSection.scrollIntoView({ behavior: 'smooth' });
     }
 
-    // 重置
     function reset() {
       people = [];
       bills = [];
       billIdCounter = 1;
       baseCurrency = 'TWD';
-      lastBillCurrency = baseCurrency;
-      populateCurrencySelect(baseCurrencySelect, baseCurrency);
-      populateCurrencySelect(billCurrencySelect, lastBillCurrency);
-      
-      peopleCountInput.disabled = false;
-      peopleCountInput.value = 3;
-      confirmPeopleBtn.disabled = false;
-      
-      generatePeopleInputs();
-      
+      resetUI();
+      pushToServer(); // 清空伺服器
+      closeResetModal();
+    }
+
+    function resetUI() {
       billSection.classList.add('hidden');
       resultSection.classList.add('hidden');
       detailSectionEl.classList.add('hidden');
       calculateSection.style.display = 'none';
-      
-      billTitleInput.value = '';
-      billCategorySelect.value = '';
-      billAmountInput.value = '';
       billsListDiv.innerHTML = '';
-      billError.classList.add('hidden');
       detailContentEl.innerHTML = '';
-      closeResetModal();
+      
+      peopleCountInput.disabled = false;
+      confirmPeopleBtn.disabled = false;
+      confirmPeopleBtn.innerText = "✓ 確認人員";
+      peopleInputsDiv.innerHTML = '';
+      generatePeopleInputs();
     }
 
     function renderDetails() {
       if (!detailContentEl) return;
+      
       if (bills.length === 0) {
         detailContentEl.innerHTML = '<div class="empty-state"><div class="empty-state-icon">📄</div><p>目前沒有明細</p></div>';
         return;
@@ -959,10 +1008,11 @@
 
       let html = '';
       bills.forEach(bill => {
-        const payer = people.find(p => p.id === bill.paidBy);
+        const payer = people.find(p => p.id === bill.paidBy) || { name: '未知' };
         const baseAmount = bill.amountBase;
         const perPerson = baseAmount ? baseAmount / bill.participants.length : null;
         const participantNames = bill.participants.map(id => people.find(p => p.id === id)?.name || '').join('、');
+        
         html += `
           <div class="detail-card">
             <div class="detail-header">
@@ -971,7 +1021,7 @@
             </div>
             <div class="detail-meta">
               <div>分類：${bill.category || '無分類'}</div>
-              <div>付款人：${payer ? payer.name : '未知'}</div>
+              <div>付款人：${payer.name}</div>
               <div>換算為 ${baseCurrency}：${baseAmount ? baseAmount.toFixed(2) : '待計算'}</div>
               <div>每人（${baseCurrency}）：${perPerson ? perPerson.toFixed(2) : '待計算'}</div>
             </div>
@@ -988,48 +1038,20 @@
     confirmPeopleBtn.addEventListener('click', confirmPeople);
     addBillBtn.addEventListener('click', addBill);
     calculateBtn.addEventListener('click', calculate);
-    function openResetModal() {
-      if (!resetModal) return;
-      resetModal.classList.remove('hidden');
-      document.body.style.overflow = 'hidden';
-    }
-
-    function closeResetModal() {
-      if (!resetModal) return;
-      resetModal.classList.add('hidden');
-      document.body.style.overflow = '';
-    }
-
+    
+    // Modal
+    function openResetModal() { resetModal.classList.remove('hidden'); }
+    function closeResetModal() { resetModal.classList.add('hidden'); }
     resetBtn.addEventListener('click', openResetModal);
     cancelResetBtn.addEventListener('click', closeResetModal);
-    resetModal.addEventListener('click', (e) => {
-      if (e.target === resetModal) closeResetModal();
-    });
-    confirmResetBtn.addEventListener('click', () => {
-      closeResetModal();
-      reset();
-    });
-    document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape') closeResetModal();
-    });
+    confirmResetBtn.addEventListener('click', reset);
+
     baseCurrencySelect.addEventListener('change', () => {
       baseCurrency = baseCurrencySelect.value;
-      lastBillCurrency = baseCurrency;
-      billCurrencySelect.value = lastBillCurrency;
-      // 基準幣變更，等待重新計算後再取得換算金額
-      bills = bills.map(b => ({ ...b, amountBase: undefined }));
-      renderBills();
-      renderDetails();
+      // 幣別改變也要同步
+      pushToServer(); 
     });
 
-    // 初始化
-    detailSectionEl = document.getElementById('detailSection');
-    detailContentEl = document.getElementById('detailContent');
-    populateCurrencySelect(baseCurrencySelect, baseCurrency);
-    populateCurrencySelect(billCurrencySelect, lastBillCurrency);
-    generatePeopleInputs();
-
-    // 全域函式供 inline onclick 使用
     window.deleteBill = deleteBill;
   </script>
 </body>
