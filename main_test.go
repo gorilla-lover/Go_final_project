@@ -2,12 +2,15 @@ package main
 
 import (
 	"fmt"
+	"math"
 	"math/rand"
 	"testing"
+	"time"
 )
 
-// TestCalculate 使用 Table-Driven Tests 策略來測試分帳邏輯
-// 這是 Go 語言社群最推薦的測試寫法，易於擴充與閱讀。
+// ==========================================
+// 1. 核心演算法測試
+// ==========================================
 func TestCalculate(t *testing.T) {
 	// 定義測試案例結構
 	tests := []struct {
@@ -34,8 +37,6 @@ func TestCalculate(t *testing.T) {
 				},
 			},
 			expected: []Settlement{
-				// Bob 欠 Alice 100, Charlie 欠 Alice 100
-				// 注意：你的演算法輸出順序可能會變，這裡我們只檢查是否包含正確的轉帳邏輯
 				{From: "Bob", To: "Alice", Amount: 100},
 				{From: "Charlie", To: "Alice", Amount: 100},
 			},
@@ -48,14 +49,8 @@ func TestCalculate(t *testing.T) {
 				{ID: 3, Name: "Charlie"},
 			},
 			bills: []Bill{
-				// Alice 付 300 (每人應付 100) -> Alice +200
 				{ID: 1, AmountBase: 300, PaidBy: 1, Participants: []int{1, 2, 3}},
-				// Bob 付 150 (每人應付 50) -> Bob +100
 				{ID: 2, AmountBase: 150, PaidBy: 2, Participants: []int{1, 2, 3}},
-				// 總結：
-				// Alice 淨支付: 300, 應付: 150, 餘額: +150 (應收)
-				// Bob   淨支付: 150, 應付: 150, 餘額: 0   (平)
-				// Charlie 淨支付: 0, 應付: 150, 餘額: -150 (應付)
 			},
 			expected: []Settlement{
 				{From: "Charlie", To: "Alice", Amount: 150},
@@ -65,7 +60,7 @@ func TestCalculate(t *testing.T) {
 			name:     "Case 3: 沒有帳單",
 			people:   []Person{{ID: 1, Name: "A"}, {ID: 2, Name: "B"}},
 			bills:    []Bill{},
-			expected: nil, // 預期沒有結果
+			expected: nil,
 		},
 	}
 
@@ -79,7 +74,7 @@ func TestCalculate(t *testing.T) {
 				return
 			}
 
-			// 驗證內容 (這裡做簡單的包含檢查)
+			// 驗證內容
 			for _, wantItem := range tt.expected {
 				found := false
 				for _, gotItem := range got {
@@ -99,8 +94,76 @@ func TestCalculate(t *testing.T) {
 	}
 }
 
-// BenchmarkCalculate 效能測試
-// 模擬「不均勻」的真實場景，強迫演算法執行最複雜的配對邏輯
+// ==========================================
+// 2. JSON 資料解析測試 (Data Parsing)
+// 驗證能否正確解析外部 API 的複雜 JSON 格式
+// ==========================================
+func TestParseRateResponse(t *testing.T) {
+	// 模擬外部 API 回傳的 JSON (TWD 為基準)
+	mockJSON := []byte(`{
+		"date": "2025-12-06",
+		"twd": {
+			"usd": 0.03125, 
+			"jpy": 4.5
+		}
+	}`)
+
+	// 測試目標：以 "TWD" 為基準進行解析
+	entry, err := parseRateResponse("TWD", mockJSON)
+
+	if err != nil {
+		t.Fatalf("解析失敗: %v", err)
+	}
+
+	// 驗證日期
+	if entry.Date != "2025-12-06" {
+		t.Errorf("日期解析錯誤, got: %s", entry.Date)
+	}
+
+	// 驗證匯率數值 (假設 1 TWD = 0.03125 USD)
+	if rate, ok := entry.Rates["usd"]; !ok || rate != 0.03125 {
+		t.Errorf("USD 匯率解析錯誤, got: %v", rate)
+	}
+}
+
+// ==========================================
+// 3. 匯率轉換邏輯測試 (Mocking Strategy)
+// 透過「注入假資料」來測試幣別換算，不需連網
+// ==========================================
+func TestConvertBillsToBase_WithMock(t *testing.T) {
+	// 1. 準備 Mock (假) 的匯率快取
+	mockBase := "twd"
+	rateCache[mockBase] = rateEntry{
+		Date:      "2025-01-01",
+		FetchedAt: time.Now(),
+		Rates: map[string]float64{
+			"usd": 0.1, // 假設 1 TWD = 0.1 USD (即 1 USD = 10 TWD)
+		},
+	}
+
+	// 2. 準備測試帳單 (10 USD)
+	inputBills := []Bill{
+		{ID: 1, Title: "US Snack", Amount: 10, Currency: "USD"},
+	}
+
+	// 3. 執行轉換
+	converted, _, err := convertBillsToBase(mockBase, inputBills)
+
+	if err != nil {
+		t.Fatalf("轉換過程報錯: %v", err)
+	}
+
+	// 4. 驗證結果 (10 USD / 0.1 = 100 TWD)
+	expectedAmount := 100.0
+	if math.Abs(converted[0].AmountBase-expectedAmount) > 0.01 {
+		t.Errorf("匯率換算錯誤: 10 USD (Rate 0.1) 應為 %.2f TWD, 但得到 %.2f",
+			expectedAmount, converted[0].AmountBase)
+	}
+}
+
+// ==========================================
+// 4. 效能測試
+// ==========================================
 func BenchmarkCalculate(b *testing.B) {
 	// 1. 準備測試資料 (100人, 1000筆帳單)
 	peopleCount := 100
@@ -120,7 +183,6 @@ func BenchmarkCalculate(b *testing.B) {
 		amt := rng.Float64() * 1000
 
 		// 場景 B: 貧富差距 (只有前 10% 的人會付錢，其他人只吃飯)
-		// 這樣會製造出大量的債務人，強迫結算邏輯運作到極限
 		payer := rng.Intn(10) + 1
 
 		// 場景 C: 隨機參與 (每筆帳單約 50% 人參與，而非全部)
@@ -130,7 +192,7 @@ func BenchmarkCalculate(b *testing.B) {
 				participants = append(participants, p)
 			}
 		}
-		// 防呆：如果隨機到沒人參與，強制付款人自己參與
+		// 防呆
 		if len(participants) == 0 {
 			participants = append(participants, payer)
 		}
