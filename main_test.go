@@ -1,6 +1,8 @@
 package main
 
 import (
+	"fmt"
+	"math/rand"
 	"testing"
 )
 
@@ -98,8 +100,7 @@ func TestCalculate(t *testing.T) {
 }
 
 // BenchmarkCalculate 效能測試
-// 模擬大量數據來測試 calculate 函數的效能
-// 執行指令: go test -bench=.
+// 模擬「不均勻」的真實場景，強迫演算法執行最複雜的配對邏輯
 func BenchmarkCalculate(b *testing.B) {
 	// 1. 準備測試資料 (100人, 1000筆帳單)
 	peopleCount := 100
@@ -107,27 +108,43 @@ func BenchmarkCalculate(b *testing.B) {
 
 	var people []Person
 	for i := 1; i <= peopleCount; i++ {
-		people = append(people, Person{ID: i, Name: "User"})
+		people = append(people, Person{ID: i, Name: fmt.Sprintf("User%d", i)})
 	}
 
 	var bills []Bill
+	// 使用固定的種子 (42)，確保每次跑 Benchmark 的數據都是一樣的 (Deterministic)
+	rng := rand.New(rand.NewSource(42))
+
 	for i := 0; i < billCount; i++ {
-		// 建立參與者列表 (所有人參與)
-		participants := make([]int, peopleCount)
-		for j := 0; j < peopleCount; j++ {
-			participants[j] = j + 1
+		// 場景 A: 隨機金額
+		amt := rng.Float64() * 1000
+
+		// 場景 B: 貧富差距 (只有前 10% 的人會付錢，其他人只吃飯)
+		// 這樣會製造出大量的債務人，強迫結算邏輯運作到極限
+		payer := rng.Intn(10) + 1
+
+		// 場景 C: 隨機參與 (每筆帳單約 50% 人參與，而非全部)
+		var participants []int
+		for p := 1; p <= peopleCount; p++ {
+			if rng.Intn(2) == 0 { // 50% 機率
+				participants = append(participants, p)
+			}
+		}
+		// 防呆：如果隨機到沒人參與，強制付款人自己參與
+		if len(participants) == 0 {
+			participants = append(participants, payer)
 		}
 
 		bills = append(bills, Bill{
 			ID:           i,
 			Title:        "Bench Bill",
-			AmountBase:   1000,
-			PaidBy:       (i % peopleCount) + 1, // 輪流付款
+			AmountBase:   amt,
+			PaidBy:       payer,
 			Participants: participants,
 		})
 	}
 
-	b.ResetTimer() // 重置計時器，排除資料準備時間
+	b.ResetTimer() // 重置計時器，只計算 calculate 的時間
 	for i := 0; i < b.N; i++ {
 		calculate(people, bills)
 	}
