@@ -1,5 +1,6 @@
 <!doctype html>
 <html>
+
 <head>
   <meta charset="utf-8" />
   <title>分帳器</title>
@@ -58,6 +59,7 @@
       background: #f8f9fa;
       border-radius: 12px;
       border: 2px solid #e9ecef;
+      transition: all 0.3s ease;
     }
 
     .section-title {
@@ -170,6 +172,17 @@
       box-shadow: 0 6px 20px rgba(102, 126, 234, 0.5);
     }
 
+    /* 灰色按鈕樣式 (用於關閉按鈕) */
+    .btn-gray {
+      background: #718096;
+      color: white;
+      box-shadow: 0 4px 15px rgba(113, 128, 150, 0.4);
+    }
+    .btn-gray:hover {
+      background: #4a5568;
+      transform: translateY(-2px);
+    }
+
     .btn-secondary {
       background: #e9ecef;
       color: #495057;
@@ -262,7 +275,7 @@
       font-size: 12px;
       font-weight: 500;
     }
-    
+
     .category-badge {
       display: inline-flex;
       align-items: center;
@@ -459,6 +472,7 @@
     }
   </style>
 </head>
+
 <body>
   <div class="container">
     <div class="header">
@@ -467,7 +481,6 @@
     </div>
 
     <div class="content">
-      <!-- 步驟 1: 設定人員 -->
       <div class="section">
         <div class="section-title">
           <span class="step-number">1</span>
@@ -490,13 +503,12 @@
         </div>
       </div>
 
-      <!-- 步驟 2: 新增帳單 -->
       <div class="section hidden" id="billSection">
         <div class="section-title">
           <span class="step-number">2</span>
           新增帳單
         </div>
-        
+
         <div class="form-group">
           <label>帳單名稱</label>
           <input type="text" id="billTitle" placeholder="例如：晚餐、計程車、電影票" />
@@ -542,17 +554,15 @@
 
         <div id="billError" class="error-message hidden"></div>
 
-        <!-- 已新增的帳單列表 -->
         <div id="billsList" style="margin-top: 30px;"></div>
 
         <div class="button-group" id="calculateSection" style="display: none;">
           <button class="btn-primary" id="calculateBtn">
-            🧮 計算分帳結果
+            🧮 分帳結果
           </button>
         </div>
       </div>
 
-      <!-- 步驟 3: 結算結果 -->
       <div class="section hidden" id="resultSection">
         <div class="section-title">
           <span class="step-number">3</span>
@@ -561,7 +571,6 @@
         <div id="resultContent"></div>
       </div>
 
-      <!-- 步驟 4: 查看明細 -->
       <div class="section hidden detail-section" id="detailSection">
         <div class="section-title">
           <span class="step-number">4</span>
@@ -578,7 +587,6 @@
     </div>
   </div>
 
-  <!-- 重置確認彈窗 -->
   <div class="modal-overlay hidden" id="resetModal">
     <div class="modal">
       <h3>重新開始</h3>
@@ -601,14 +609,17 @@
       { code: 'HKD', label: '港幣 (HKD)' },
       { code: 'CNY', label: '人民幣 (CNY)' },
     ];
-    
+
     // 狀態變數
     let baseCurrency = 'TWD';
     let lastBillCurrency = baseCurrency;
     let people = [];
     let bills = [];
     let billIdCounter = 1;
-    let lastServerUpdate = 0; // 用於判斷是否需要重新渲染
+    let lastServerUpdate = 0; 
+    
+    // ★★★ 新增狀態：是否顯示結果 ★★★
+    let isResultVisible = false;
 
     // DOM 元素
     const peopleCountInput = document.getElementById('peopleCount');
@@ -641,7 +652,7 @@
     populateCurrencySelect(baseCurrencySelect, baseCurrency);
     populateCurrencySelect(billCurrencySelect, lastBillCurrency);
     generatePeopleInputs();
-    
+
     // 啟動時嘗試從伺服器同步資料
     syncFromServer();
     // 設定定時器，每 2 秒自動同步一次
@@ -650,36 +661,32 @@
     // ================== 同步核心功能 ==================
 
     async function syncFromServer() {
-      // 只有在 Server 模式下 (沒有 window.calculateSplit) 才執行自動同步
-      // 這樣桌面版還是可以獨立運作
       if (window.calculateSplit) return;
 
       try {
         const response = await fetch('/api/sync');
         if (!response.ok) return;
-        
+
         const state = await response.json();
-        
-        // 只有當伺服器資料比本地新，或本地是空的時才更新
+
         if (state.lastUpdated > lastServerUpdate || (state.people.length > 0 && people.length === 0)) {
           lastServerUpdate = state.lastUpdated;
-          
-          // 更新本地狀態
+
           people = state.people || [];
           bills = state.bills || [];
           baseCurrency = state.baseCurrency || 'TWD';
-          
-          // 重新計算 ID Counter，避免重複
+
           if (bills.length > 0) {
             const maxId = Math.max(...bills.map(b => b.id));
             billIdCounter = maxId + 1;
           }
 
-          // 更新 UI
           if (people.length > 0) {
             updateUIForExistingProject();
+            if (bills.length > 0) {
+              calculate();
+            }
           } else {
-            // 如果伺服器是空的，顯示初始畫面
             resetUI();
           }
         }
@@ -689,7 +696,7 @@
     }
 
     async function pushToServer() {
-      if (window.calculateSplit) return; // 桌面版不需推送
+      if (window.calculateSplit) return; 
 
       const state = {
         people: people,
@@ -703,21 +710,17 @@
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(state)
         });
-        // 推送完立即再拉一次以確保版本號同步
         syncFromServer();
       } catch (e) {
         alert("無法儲存至伺服器，請檢查連線");
       }
     }
 
-    // 當從伺服器載入既有專案時，更新畫面
     function updateUIForExistingProject() {
-      // 隱藏人員設定，顯示帳單區域
       peopleCountInput.disabled = true;
       confirmPeopleBtn.disabled = true;
       confirmPeopleBtn.innerText = "✓ 人員已設定";
-      
-      // 重建人員選單
+
       billPaidBySelect.innerHTML = '';
       people.forEach(person => {
         const option = document.createElement('option');
@@ -726,8 +729,6 @@
         billPaidBySelect.appendChild(option);
       });
 
-      // 重建參與者選單 (注意：這裡不應覆蓋使用者正在選的狀態，簡單起見先重建)
-      // 優化：如果 DOM 已經存在且數量一致，就不重建，避免輸入中斷
       if (billParticipantsDiv.children.length !== people.length) {
         billParticipantsDiv.innerHTML = '';
         people.forEach(person => {
@@ -740,14 +741,14 @@
 
       billSection.classList.remove('hidden');
       baseCurrencySelect.value = baseCurrency;
-      
+
       renderBills();
       if (bills.length > 0) {
         calculateSection.style.display = 'block';
       }
     }
 
-    // ================== 原有功能修改 ==================
+    // ================== 一般功能 ==================
 
     function populateCurrencySelect(selectEl, defaultCode) {
       selectEl.innerHTML = '';
@@ -761,7 +762,7 @@
     }
 
     function generatePeopleInputs() {
-      if (people.length > 0) return; // 已鎖定則不生成
+      if (people.length > 0) return;
       const count = Math.min(Math.max(2, parseInt(peopleCountInput.value) || 2), MAX_PEOPLE);
       peopleCountInput.value = count;
       peopleInputsDiv.innerHTML = '';
@@ -785,9 +786,8 @@
         alert('至少需要 2 個人！');
         return;
       }
-      
+
       people = newPeople;
-      // 立即推送至伺服器
       pushToServer();
       updateUIForExistingProject();
     }
@@ -815,21 +815,21 @@
         paidBy: paidBy,
         participants: participants
       };
-      
+
       bills.push(bill);
-      
-      // 推送更新
       pushToServer();
 
-      // UI 處理
       lastBillCurrency = currency;
       billCurrencySelect.value = currency;
       billTitleInput.value = '';
       billAmountInput.value = '';
       calculateSection.style.display = 'block';
-      
-      // 暫時本地渲染，等待 Server 同步確認
+
       renderBills();
+      
+      // 自動背景計算，確保數據是最新的
+      // 但不會強制打開視窗，因為 displayResult 已經改為不強制移除 hidden
+      calculate();
     }
 
     function renderBills() {
@@ -840,18 +840,14 @@
       }
 
       billsListDiv.innerHTML = '<h3 style="margin-bottom: 15px; color: #2d3748;">已新增的帳單</h3>';
-      
+
       bills.forEach(bill => {
-        // 安全檢查：避免同步過程中人員資料尚未載入導致報錯
         const payer = people.find(p => p.id === bill.paidBy) || { name: '未知' };
-        
-        const participantNames = bill.participants.map(id => 
+        const participantNames = bill.participants.map(id =>
           people.find(p => p.id === id)?.name || ''
-        ).filter(n => n !== ''); // 過濾掉找不到名字的
-        
+        ).filter(n => n !== ''); 
+
         const categoryLabel = bill.category ? bill.category : '無分類';
-        
-        // 只有在按下計算後，後端才會回傳 amountBase，否則為 undefined
         const baseAmount = bill.amountBase;
         const perPersonBase = baseAmount ? baseAmount / bill.participants.length : null;
 
@@ -894,47 +890,56 @@
     }
 
     function deleteBill(billId) {
-      if(!confirm("確定刪除此帳單？")) return;
+      if (!confirm("確定刪除此帳單？")) return;
+
       bills = bills.filter(b => b.id !== billId);
       pushToServer();
       renderBills();
-      if (bills.length === 0) calculateSection.style.display = 'none';
+
+      if (bills.length === 0) {
+        calculateSection.style.display = 'none';
+        
+        // 沒帳單時，強制關閉結果區
+        isResultVisible = false;
+        resultSection.classList.add('hidden');
+        detailSectionEl.classList.add('hidden');
+        calculateBtn.innerText = "🧮 分帳結果";
+        calculateBtn.classList.remove('btn-gray');
+        calculateBtn.classList.add('btn-primary');
+      } else {
+        calculate();
+      }
     }
 
     async function calculate() {
       if (bills.length === 0) return;
       const request = { baseCurrency: baseCurrency, people: people, bills: bills };
-      
+
       try {
         let resultJSON;
         if (window.calculateSplit) {
           resultJSON = await window.calculateSplit(JSON.stringify(request));
         } else {
-          // 計算還是走原本的 API
           const response = await fetch('/api/calculate', {
             method: 'POST',
             body: JSON.stringify(request)
           });
           resultJSON = await response.text();
         }
-        
+
         const result = JSON.parse(resultJSON);
         if (result.error) { alert(result.error); return; }
 
-        // 如果後端有更新 baseCurrency (例如自動轉大寫)，同步回來
         if (result.baseCurrency && result.baseCurrency !== baseCurrency) {
-            baseCurrency = result.baseCurrency;
-            pushToServer(); // 更新設定到伺服器
+          baseCurrency = result.baseCurrency;
+          pushToServer();
         }
 
-        // 更新帳單的匯率換算結果到本地顯示用 (不存回資料庫，因為那只是顯示)
         if (Array.isArray(result.bills)) {
           const mapById = new Map(result.bills.map(b => [b.id, b]));
-          // 這裡我們只更新本地 bills 的 amountBase 用於顯示，不 pushToServer
-          // 避免把計算結果當作原始資料存回去
           bills.forEach(b => {
-             const calc = mapById.get(b.id);
-             if(calc) b.amountBase = calc.amountBase;
+            const calc = mapById.get(b.id);
+            if (calc) b.amountBase = calc.amountBase;
           });
           renderDetails();
         }
@@ -946,9 +951,9 @@
     }
 
     function displayResult(settlements) {
-      resultSection.classList.remove('hidden');
-      detailSectionEl.classList.remove('hidden');
-      
+      // ★★★ 修正：這裡不再強制移除 hidden class ★★★
+      // 顯示與否完全由按鈕控制
+
       if (settlements.length === 0) {
         resultContent.innerHTML = '<div class="empty-state"><div class="empty-state-icon">✅</div><p>太好了！大家已經結清，不需要轉帳</p></div>';
         return;
@@ -968,9 +973,39 @@
         `;
       });
       html += '</div>';
-      
+
       resultContent.innerHTML = html;
-      resultSection.scrollIntoView({ behavior: 'smooth' });
+    }
+
+    // ★★★ 新增：切換結果顯示邏輯 ★★★
+    function toggleResults() {
+      if (isResultVisible) {
+        // 目前是顯示狀態 -> 執行關閉
+        resultSection.classList.add('hidden');
+        detailSectionEl.classList.add('hidden');
+        
+        // 恢復按鈕樣式
+        calculateBtn.innerText = "🧮 分帳結果";
+        calculateBtn.classList.remove('btn-gray');
+        calculateBtn.classList.add('btn-primary');
+        
+        isResultVisible = false;
+      } else {
+        // 目前是隱藏狀態 -> 執行開啟
+        calculate(); // 確保資料最新
+        resultSection.classList.remove('hidden');
+        detailSectionEl.classList.remove('hidden');
+        
+        // 更改按鈕樣式
+        calculateBtn.innerText = "❌ 關閉分帳結果";
+        calculateBtn.classList.remove('btn-primary');
+        calculateBtn.classList.add('btn-gray');
+        
+        // 滾動到結果區
+        resultSection.scrollIntoView({ behavior: 'smooth' });
+        
+        isResultVisible = true;
+      }
     }
 
     function reset() {
@@ -979,7 +1014,7 @@
       billIdCounter = 1;
       baseCurrency = 'TWD';
       resetUI();
-      pushToServer(); // 清空伺服器
+      pushToServer(); 
       closeResetModal();
     }
 
@@ -990,7 +1025,13 @@
       calculateSection.style.display = 'none';
       billsListDiv.innerHTML = '';
       detailContentEl.innerHTML = '';
-      
+
+      // 重置按鈕狀態
+      isResultVisible = false;
+      calculateBtn.innerText = "🧮 分帳結果";
+      calculateBtn.classList.remove('btn-gray');
+      calculateBtn.classList.add('btn-primary');
+
       peopleCountInput.disabled = false;
       confirmPeopleBtn.disabled = false;
       confirmPeopleBtn.innerText = "✓ 確認人員";
@@ -1000,7 +1041,7 @@
 
     function renderDetails() {
       if (!detailContentEl) return;
-      
+
       if (bills.length === 0) {
         detailContentEl.innerHTML = '<div class="empty-state"><div class="empty-state-icon">📄</div><p>目前沒有明細</p></div>';
         return;
@@ -1012,7 +1053,7 @@
         const baseAmount = bill.amountBase;
         const perPerson = baseAmount ? baseAmount / bill.participants.length : null;
         const participantNames = bill.participants.map(id => people.find(p => p.id === id)?.name || '').join('、');
-        
+
         html += `
           <div class="detail-card">
             <div class="detail-header">
@@ -1037,8 +1078,10 @@
     peopleCountInput.addEventListener('input', generatePeopleInputs);
     confirmPeopleBtn.addEventListener('click', confirmPeople);
     addBillBtn.addEventListener('click', addBill);
-    calculateBtn.addEventListener('click', calculate);
     
+    // ★★★ 修改：按鈕點擊改為觸發切換函式 ★★★
+    calculateBtn.addEventListener('click', toggleResults);
+
     // Modal
     function openResetModal() { resetModal.classList.remove('hidden'); }
     function closeResetModal() { resetModal.classList.add('hidden'); }
@@ -1048,11 +1091,11 @@
 
     baseCurrencySelect.addEventListener('change', () => {
       baseCurrency = baseCurrencySelect.value;
-      // 幣別改變也要同步
-      pushToServer(); 
+      pushToServer();
     });
 
     window.deleteBill = deleteBill;
   </script>
 </body>
+
 </html>
