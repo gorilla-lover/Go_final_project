@@ -16,3 +16,20 @@
 (請確保手機與電腦連線到同一個 Wi-Fi)
 按 Ctrl+C 結束程式
 ========================================
+
+
+------------main_test.go------------
+1. TestCalculate(): 測試核心函數Calculate()進行分帳結算是否正確
+2. TestParseRateResponse()：測試函數ParseRateResponse()能否正確解析匯率API回傳的JSON資料
+3. TestConvertBillsToBase_WithMock()：測試函數ConvertBillsToBase()是否能正確轉換匯率
+4. BenchmarkCalculate()：測時函數Calculate()在高資料量（100位使用者和1000筆帳單）下的表現
+
+如何使用：
+1. 2. 3. -> 終端機輸入：$go test -v
+            結果判斷：若正確顯示「PASS」
+4. -> 終端機輸入：$ go test -bench=. -benchmem
+      結果判斷：ns/op (每次操作奈秒數) 越低越好
+
+------------go.yml------------
+GitHub 的自動化工作流程 (Workflow)：
+每次push到GitHub時，會自動執行main_test.go測試
