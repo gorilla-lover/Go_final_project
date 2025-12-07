@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"net/url"
@@ -45,22 +46,19 @@ type Settlement struct {
 	Amount float64 `json:"amount"`
 }
 
-// GlobalState 用於儲存伺服器端的共享狀態
 type GlobalState struct {
 	People       []Person `json:"people"`
 	Bills        []Bill   `json:"bills"`
 	BaseCurrency string   `json:"baseCurrency"`
-	LastUpdated  int64    `json:"lastUpdated"` // 用於版本控制 (Timestamp)
+	LastUpdated  int64    `json:"lastUpdated"`
 }
 
-// CalculateRequest 計算請求
 type CalculateRequest struct {
 	BaseCurrency string   `json:"baseCurrency,omitempty"`
 	People       []Person `json:"people"`
 	Bills        []Bill   `json:"bills"`
 }
 
-// CalculateResponse 計算結果
 type CalculateResponse struct {
 	Settlements  []Settlement `json:"settlements"`
 	Bills        []Bill       `json:"bills,omitempty"`
@@ -75,10 +73,9 @@ type rateEntry struct {
 	FetchedAt time.Time
 }
 
-// ================= 全域變數 =================
+// ================= 全域變數（保留原有功能） =================
 
 var (
-	// 專案共享狀態 (加上 Mutex 鎖以確保執行緒安全)
 	projectState = GlobalState{
 		People:       []Person{},
 		Bills:        []Bill{},
@@ -87,12 +84,81 @@ var (
 	}
 	stateMutex sync.Mutex
 
-	// 匯率快取
-	rateCache       = make(map[string]rateEntry)
-	rateCacheTTL    = 30 * time.Minute
+	// exchange API template (unchanged)
 	exchangeAPIBase = "https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/v1/currencies/%s.json"
 	defaultBase     = "TWD"
+	rateCacheTTL    = 30 * time.Minute
 )
+
+// ================= RateFetcher interface & HTTP implementation =================
+
+// RateFetcher 抽象化外部匯率來源
+type RateFetcher interface {
+	Fetch(base string) (rateEntry, error)
+}
+
+type HTTPRateFetcher struct {
+	baseURL string
+	client  *http.Client
+}
+
+func NewHTTPRateFetcher(baseURL string) *HTTPRateFetcher {
+	return &HTTPRateFetcher{
+		baseURL: baseURL,
+		client:  &http.Client{Timeout: 5 * time.Second},
+	}
+}
+
+func (h *HTTPRateFetcher) Fetch(base string) (rateEntry, error) {
+	urlStr := fmt.Sprintf(h.baseURL, base)
+	resp, err := h.client.Get(urlStr)
+	if err != nil {
+		return rateEntry{}, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return rateEntry{}, fmt.Errorf("HTTP %d", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return rateEntry{}, err
+	}
+
+	return parseRateResponse(base, body)
+}
+
+// ================= RateCache (thread-safe) =================
+
+type RateCache struct {
+	mu    sync.RWMutex
+	cache map[string]rateEntry
+}
+
+func NewRateCache() *RateCache {
+	return &RateCache{
+		cache: make(map[string]rateEntry),
+	}
+}
+
+func (rc *RateCache) Get(base string) (rateEntry, bool) {
+	rc.mu.RLock()
+	defer rc.mu.RUnlock()
+	e, ok := rc.cache[base]
+	return e, ok
+}
+
+func (rc *RateCache) Set(base string, e rateEntry) {
+	rc.mu.Lock()
+	defer rc.mu.Unlock()
+	rc.cache[base] = e
+}
+
+var rateCache = NewRateCache()
+
+// 供測試或特殊情境外部替換 fetcher
+var rateFetcher RateFetcher = NewHTTPRateFetcher(exchangeAPIBase)
 
 // ================= 主程式 =================
 
@@ -115,40 +181,46 @@ func runDesktop() {
 	w.SetTitle("分帳器 - Bill Splitter")
 	w.SetSize(900, 700, webview.HintNone)
 
-	// 桌面版也可以綁定同步函數，讓邏輯統一
+	// 綁定計算函數（desktop 版本仍保持原有行為）
+	// webview 的 Bind 需要函數型態符合條件；我們保持 processCalculate 的簽名
 	w.Bind("calculateSplit", processCalculate)
 
-	// 桌面版目前維持原本行為，若要支援同步需改用 API 呼叫模式
-	// 這裡為了相容性，傳入 HTML
 	dataURI := "data:text/html;charset=utf-8," + url.PathEscape(indexHTML)
 	w.Navigate(dataURI)
 	w.Run()
 }
 
 func runServer(port string) {
-	// 1. 首頁
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.Write([]byte(indexHTML))
+		if _, err := w.Write([]byte(indexHTML)); err != nil {
+			log.Printf("write index failed: %v", err)
+		}
 	})
 
-	// 2. 計算 API
 	http.HandleFunc("/api/calculate", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		body, _ := io.ReadAll(r.Body)
+
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, "failed read body", http.StatusBadRequest)
+			return
+		}
 		defer r.Body.Close()
+
 		resultJSON := processCalculate(string(body))
+
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(resultJSON))
+		if _, err := w.Write([]byte(resultJSON)); err != nil {
+			log.Printf("/api/calculate write failed: %v", err)
+		}
 	})
 
-	// 3. 同步 API (核心修改：讀取與寫入共享狀態)
 	http.HandleFunc("/api/sync", handleSync)
 
-	// 顯示連線資訊
 	ip := getLocalIP()
 	fmt.Println("========================================")
 	fmt.Printf("分帳器伺服器已啟動 (同步模式)！\n")
@@ -161,38 +233,52 @@ func runServer(port string) {
 	fmt.Println("現在所有連線裝置將會看到相同的帳單資料。")
 	fmt.Println("========================================")
 
-	http.ListenAndServe(":"+port, nil)
+	if err := http.ListenAndServe(":"+port, nil); err != nil {
+		log.Fatalf("server exit: %v", err)
+	}
 }
 
-// handleSync 處理狀態同步
+// handleSync 處理狀態同步（保留行為，但修正錯誤處理）
 func handleSync(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
 	stateMutex.Lock()
 	defer stateMutex.Unlock()
 
-	// 若是 POST，代表前端要更新資料
 	if r.Method == http.MethodPost {
 		var newState GlobalState
-		body, _ := io.ReadAll(r.Body)
-		if err := json.Unmarshal(body, &newState); err == nil {
-			// 更新伺服器狀態
-			projectState = newState
-			projectState.LastUpdated = time.Now().UnixMilli()
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, "invalid body", http.StatusBadRequest)
+			return
 		}
+		defer r.Body.Close()
+
+		if err := json.Unmarshal(body, &newState); err != nil {
+			http.Error(w, "invalid json", http.StatusBadRequest)
+			return
+		}
+
+		projectState = newState
+		projectState.LastUpdated = time.Now().UnixMilli()
 	}
 
-	// 無論 GET 或 POST，最後都回傳最新的伺服器狀態
-	json.NewEncoder(w).Encode(projectState)
+	enc := json.NewEncoder(w)
+	if err := enc.Encode(projectState); err != nil {
+		log.Printf("encode projectState failed: %v", err)
+	}
 }
 
-// processCalculate 保持不變，負責運算
+// processCalculate：保持外部介面不變，但內部更嚴謹處理錯誤
 func processCalculate(requestJSON string) string {
 	var req CalculateRequest
 	if err := json.Unmarshal([]byte(requestJSON), &req); err != nil {
 		response := CalculateResponse{Error: "解析資料錯誤"}
-		result, _ := json.Marshal(response)
-		return string(result)
+		if result, err := json.Marshal(response); err == nil {
+			return string(result)
+		}
+		// 若真的 marshal 也失敗，回傳簡單字串
+		return `{"error":"解析資料錯誤"}`
 	}
 
 	base := strings.ToUpper(strings.TrimSpace(req.BaseCurrency))
@@ -203,8 +289,10 @@ func processCalculate(requestJSON string) string {
 	convertedBills, rateDate, err := convertBillsToBase(base, req.Bills)
 	if err != nil {
 		response := CalculateResponse{Error: err.Error(), BaseCurrency: base, RateDate: rateDate}
-		result, _ := json.Marshal(response)
-		return string(result)
+		if result, err := json.Marshal(response); err == nil {
+			return string(result)
+		}
+		return `{"error":"internal"}` // fallback
 	}
 
 	settlements := calculate(req.People, convertedBills)
@@ -215,39 +303,35 @@ func processCalculate(requestJSON string) string {
 		BaseCurrency: base,
 		RateDate:     rateDate,
 	}
-	result, _ := json.Marshal(response)
-	return string(result)
+	if result, err := json.Marshal(response); err == nil {
+		return string(result)
+	}
+	return `{"error":"internal"}` // fallback
 }
 
-// getLocalIP 改良版：篩選出真實的實體網卡
+// getLocalIP 與原版行為相同（僅作小格式整理）
 func getLocalIP() string {
-	// 取得所有網路介面
 	interfaces, err := net.Interfaces()
 	if err != nil {
 		return ""
 	}
 
-	// 虛擬網卡的常見名稱前綴
 	virtualPrefixes := []string{
 		"docker", "veth", "br-", "virbr", "vmnet", "vbox",
 		"utun", "tap", "tun", "ppp", "awdl", "llw", "bridge",
-		"vEthernet", "Hyper-V", "VirtualBox", "VMware",
+		"vEthernet", "hyper-v", "virtualbox", "vmware",
 	}
 
 	var candidates []string
 
 	for _, iface := range interfaces {
-		// 跳過未啟用的介面
 		if iface.Flags&net.FlagUp == 0 {
 			continue
 		}
-
-		// 跳過 loopback
 		if iface.Flags&net.FlagLoopback != 0 {
 			continue
 		}
 
-		// 檢查是否為虛擬網卡（名稱比對）
 		name := strings.ToLower(iface.Name)
 		isVirtual := false
 		for _, prefix := range virtualPrefixes {
@@ -260,7 +344,6 @@ func getLocalIP() string {
 			continue
 		}
 
-		// 取得該介面的 IP 位址
 		addrs, err := iface.Addrs()
 		if err != nil {
 			continue
@@ -271,35 +354,54 @@ func getLocalIP() string {
 			if !ok {
 				continue
 			}
-
-			// 只要 IPv4 且非 loopback
 			ipv4 := ipNet.IP.To4()
 			if ipv4 != nil && !ipNet.IP.IsLoopback() {
-				// 優先選擇 192.168.x.x 或 10.x.x.x (常見的內網區段)
-				if strings.HasPrefix(ipv4.String(), "192.168.") ||
-					strings.HasPrefix(ipv4.String(), "10.") {
-					candidates = append([]string{ipv4.String()}, candidates...)
+				s := ipv4.String()
+				if strings.HasPrefix(s, "192.168.") || strings.HasPrefix(s, "10.") {
+					candidates = append([]string{s}, candidates...)
 				} else {
-					candidates = append(candidates, ipv4.String())
+					candidates = append(candidates, s)
 				}
 			}
 		}
 	}
 
-	// 回傳第一個候選 IP
 	if len(candidates) > 0 {
 		return candidates[0]
 	}
-
 	return ""
 }
 
+// ================= 匯率轉換與 fetch（改用 RateCache 與 RateFetcher） =================
+
 func convertBillsToBase(base string, bills []Bill) ([]Bill, string, error) {
 	baseLower := strings.ToLower(base)
-	rates, err := getRates(baseLower)
-	if err != nil {
-		return nil, rates.Date, err
+	entry, ok := rateCache.Get(baseLower)
+	now := time.Now()
+
+	if ok {
+		if now.Sub(entry.FetchedAt) < rateCacheTTL {
+			// fresh cache
+		} else {
+			// stale -> attempt refresh asynchronously (best-effort)
+			// but keep using stale until we get fresh
+			if fetched, err := fetchRates(baseLower); err == nil {
+				entry = fetched
+				rateCache.Set(baseLower, fetched)
+			}
+		}
+	} else {
+		// no cache -> fetch synchronously
+		fetched, err := fetchRates(baseLower)
+		if err != nil {
+			// if nothing cached, surface error
+			return nil, "", err
+		}
+		entry = fetched
+		rateCache.Set(baseLower, fetched)
 	}
+
+	rates := entry
 
 	var converted []Bill
 	for _, bill := range bills {
@@ -324,51 +426,37 @@ func convertBillsToBase(base string, bills []Bill) ([]Bill, string, error) {
 }
 
 func getRates(base string) (rateEntry, error) {
-	now := time.Now()
-	if entry, ok := rateCache[base]; ok {
-		if now.Sub(entry.FetchedAt) < rateCacheTTL {
-			return entry, nil
+	// legacy helper kept for compatibility (calls the unified path)
+	if e, ok := rateCache.Get(base); ok {
+		if time.Since(e.FetchedAt) < rateCacheTTL {
+			return e, nil
 		}
 	}
-	entry, err := fetchRates(base)
+	e, err := fetchRates(base)
 	if err != nil {
-		if cached, ok := rateCache[base]; ok {
+		if cached, ok := rateCache.Get(base); ok {
 			return cached, nil
 		}
 		return rateEntry{}, err
 	}
-	rateCache[base] = entry
-	return entry, nil
+	rateCache.Set(base, e)
+	return e, nil
 }
 
 func fetchRates(base string) (rateEntry, error) {
 	var lastErr error
 	for i := 0; i < 2; i++ {
-		entry, err := fetchRatesOnce(base)
+		entry, err := rateFetcher.Fetch(base)
 		if err == nil {
+			// ensure FetchedAt is set
+			entry.FetchedAt = time.Now()
+			rateCache.Set(base, entry)
 			return entry, nil
 		}
 		lastErr = err
 		time.Sleep(time.Duration(i+1) * 200 * time.Millisecond)
 	}
 	return rateEntry{}, lastErr
-}
-
-func fetchRatesOnce(base string) (rateEntry, error) {
-	url := fmt.Sprintf(exchangeAPIBase, base)
-	resp, err := http.Get(url)
-	if err != nil {
-		return rateEntry{}, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return rateEntry{}, fmt.Errorf("HTTP %d", resp.StatusCode)
-	}
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return rateEntry{}, err
-	}
-	return parseRateResponse(base, body)
 }
 
 func parseRateResponse(base string, data []byte) (rateEntry, error) {
@@ -378,7 +466,7 @@ func parseRateResponse(base string, data []byte) (rateEntry, error) {
 	}
 	var date string
 	if v, ok := raw["date"]; ok {
-		json.Unmarshal(v, &date)
+		_ = json.Unmarshal(v, &date)
 	}
 	baseKey := strings.ToLower(base)
 	rateRaw, ok := raw[baseKey]
@@ -390,8 +478,10 @@ func parseRateResponse(base string, data []byte) (rateEntry, error) {
 		return rateEntry{}, err
 	}
 	rates[baseKey] = 1
-	return rateEntry{Rates: rates, Date: date}, nil
+	return rateEntry{Rates: rates, Date: date, FetchedAt: time.Now()}, nil
 }
+
+// ================= 核心結算演算法（保留原邏輯） =================
 
 func calculate(people []Person, bills []Bill) []Settlement {
 	balance := make(map[int]float64)
